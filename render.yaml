@@ -10,10 +10,6 @@ services:
       - key: PYTHON_VERSION
         value: 3.11
       - key: GROQ_API_KEY
-        fromSecret: true # You will set this in the Render dashboard
+        value: YOUR_API_KEY_HERE # Replace with your actual Groq API key in the Render dashboard
       - key: TELEPHONY_CODEC
         value: pcm_mulaw # or pcm_alaw
-    disk:
-      name: audio-cache
-      mountPath: /app/public_audio
-      sizeGB: 1
