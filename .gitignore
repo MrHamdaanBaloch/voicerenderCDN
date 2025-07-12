@@ -1,0 +1,28 @@
+# Virtual Environment
+venv/
+venv_prod/
+*.venv
+.venv
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Environment variables
+.env
+
+# IDE / Editor specific
+.vscode/
+.idea/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Temporary audio files
+temp_raw_audio/

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SignalWire Click to Call Test</title>
+  <style>
+    #click2call {
+      margin: 40px auto;
+      text-align: center;
+    }
+    #call {
+      margin: 20px auto;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h2 style="text-align:center">SignalWire Click to Call Test</h2>
+  <div id="click2call"></div>
+  <div id="call"></div>
+  <script>
+    (a => {
+      var i, s, k, n = "Signalwire C2C API", o = "sw", c = "spawn", x = "Loaded", h = "authenticate", y = a["apiKey"],
+        r = document, k = window;
+      k = k[o] || (k[o] = {});
+      var w = k.c2c || (k.c2c = {}), l = (p) => new Promise(async (u, v) => {
+        await (s = r.createElement("script"));
+        s.src = `${k.codeRepository}/${p}.js`;
+        w[`${p}${x}`] = () => {
+          delete w[`${p}${a}`];
+          !w[h] ? w[c](h, y).then(u) : u();
+        };
+        s.onerror = () => i = v(Error(n + " could not load."));
+        s.nonce = r.querySelector("script[nonce]")?.nonce || "";
+        r.head.append(s);
+      });
+      k.relayHost = "puc.signalwire.com";
+      k.codeRepository = "https://app.signalwire.com";
+      k.authEndpoint = "https://voiceaicall.signalwire.com/api/fabric/embeds/tokens";
+      w[c] ? k[h](y) : w[c] = (f, ...n) => new Promise((g,) => {w[f] ? g(w[f](...n)) : l(f).then(() => g(w[f](...n)))})
+    })
+    ({ apiKey: "c2c_ad466866f66634a0833f2c9c5ad63bae", v: "0.0.1" });
+
+    sw.c2c.spawn('C2CButton', {
+      destination: '/external/1-209-265-9875-aicall',
+      buttonParentSelector: '#click2call',
+      innerHTML: null,
+      callParentSelector: '#call',
+      beforeCallStartFn: () => {
+        console.log('attempting to start new call...')
+        return true
+      },
+      afterCallStartFn: () => {
+        console.log('call started.')
+      },
+      beforeCallLeaveFn: () => {
+        console.log('attempting to hangup call...')
+        return true
+      },
+      afterCallLeaveFn: () => {
+        console.log('call ended.')
+      },
+      onCallError: (error) => {
+        console.error(error)
+      }
+    })
+  </script>
+</body>
+</html>

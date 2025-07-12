@@ -1,0 +1,24 @@
+# Web & Async Framework
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-socketio>=5.11.2
+watchdog>=3.0.0 # <--- ADD THIS LINE FOR 'watchmedo'
+
+# Task Queue & Broker
+celery>=5.4.0
+redis>=5.0.4
+
+# AI & Processing
+faster-whisper>=1.0.0
+piper-tts>=1.2.0
+groq>=0.8.0
+httpx==0.27.0
+torch>=2.3.0
+torchaudio>=2.3.0
+numpy>=1.26.0,<2.0.0
+# silero-vad is no longer needed in this architecture
+scipy>=1.10.0 # <--- ADD THIS LINE
+# Twilio & Utilities
+twilio>=8.9.0
+python-dotenv>=1.0.0
+# audioop is part of the standard library, no install needed

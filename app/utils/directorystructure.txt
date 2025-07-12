@@ -1,0 +1,139 @@
+AIVOICE/
+├── .env
+├── WORKING SIGNALRELAY/
+│   ├── .config/
+│   │   └── pulse/
+│   ├── .replit
+│   ├── Unconfirmed 26399.crdownload
+│   ├── audio_processor.py
+│   ├── call_handler.py
+│   ├── config.py
+│   ├── main.py
+│   ├── pyproject.toml
+│   ├── replit.md
+│   ├── simple_test.py
+│   ├── stt_service.py
+│   ├── tts_service.py
+│   ├── utils.py
+│   ├── uv.lock
+│   ├── vad_detector.py
+│   └── voice_app.log
+├── app/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── relay_server.cpython-311.pyc
+│   ├── api.py
+│   ├── core/
+│   │   ├── __init__.py
+│   │   ├── __pycache__/
+│   │   └── config.py
+│   ├── pipeline/
+│   │   ├── __pycache__/
+│   │   └── audio_pipeline.py
+│   ├── relay_server.py
+│   ├── result_handler.py
+│   ├── utils/
+│   │   └── audio.py
+│   └── websocket_audio.py
+├── celery_worker/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   ├── celery_app.cpython-311.pyc
+│   │   └── tasks.cpython-311.pyc
+│   ├── celery_app.py
+│   └── tasks.py
+├── click_to_call.html
+├── docker-compose.yml
+├── llm/
+│   ├── __init__.py
+│   └── groq_llm.py
+├── local_stt_models/
+│   └── tiny.en/
+│       ├── README.md
+│       ├── config.json
+│       ├── gitattributes
+│       ├── model.bin
+│       └── vocabulary.txt
+├── piper_models/
+│   ├── .env
+│   ├── en_US-lessac-medium.onnx
+│   ├── en_US-lessac-medium.onnx.json
+│   └── requirements.txt
+├── relay_server.py
+├── requirements.txt
+├── run_celery.sh
+├── run_uvicorn.sh
+├── stt/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── whisper_stt.cpython-311.pyc
+│   └── whisper_stt.py
+├── tts/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── piper_tts.cpython-311.pyc
+│   └── piper_tts.py
+├── utils/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── audio.cpython-311.pyc
+│   └── audio.py
+├── vad/
+│   ├── __init__.py
+│   ├── __pycache__/
+│   │   ├── __init__.cpython-311.pyc
+│   │   └── vad_detector.cpython-311.pyc
+│   └── vad_detector.py
+├── venv_prod/
+│   ├── bin/
+│   │   ├── Activate.ps1
+│   │   ├── activate
+│   │   ├── activate.csh
+│   │   ├── activate.fish
+│   │   ├── celery
+│   │   ├── coloredlogs
+│   │   ├── ct2-fairseq-converter
+│   │   ├── ct2-marian-converter
+│   │   ├── ct2-openai-gpt2-converter
+│   │   ├── ct2-opennmt-py-converter
+│   │   ├── ct2-opennmt-tf-converter
+│   │   ├── ct2-opus-mt-converter
+│   │   ├── ct2-transformers-converter
+│   │   ├── distro
+│   │   ├── dotenv
+│   │   ├── f2py
+│   │   ├── fastapi
+│   │   ├── httpx
+│   │   ├── huggingface-cli
+│   │   ├── humanfriendly
+│   │   ├── isympy
+│   │   ├── normalizer
+│   │   ├── onnxruntime_test
+│   │   ├── pip
+│   │   ├── pip3
+│   │   ├── pip3.11
+│   │   ├── piper
+│   │   ├── proton
+│   │   ├── proton-viewer
+│   │   ├── pyav
+│   │   ├── pyjwt
+│   │   ├── tiny-agents
+│   │   ├── torchfrtrace
+│   │   ├── torchrun
+│   │   ├── tqdm
+│   │   ├── uvicorn
+│   │   ├── watchfiles
+│   │   └── websockets
+│   ├── include/
+│   │   └── python3.11/
+│   ├── lib/
+│   │   └── python3.11/
+│   ├── pyvenv.cfg
+│   └── share/
+│       └── man/
+└── voice_app.log

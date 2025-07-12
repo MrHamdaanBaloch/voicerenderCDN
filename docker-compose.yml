@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  relay_server:
+    build: .
+    command: python relay_server.py
+    ports:
+      # Expose the audio server port to the host and the tunnel service
+      - "8080:8080"
+    env_file: .env
+    volumes:
+      # Mount the shared audio cache
+      - audio_cache:/tmp/auravoice_audio_cache
+    depends_on:
+      - redis
+
+  celery_worker:
+    build: .
+    command: celery -A celery_worker.celery_app worker --loglevel=info
+    env_file: .env
+    volumes:
+      # Mount the shared audio cache
+      - audio_cache:/tmp/auravoice_audio_cache
+    depends_on:
+      - redis
+      - relay_server
+
+volumes:
+  redis_data:
+  audio_cache: # Define the shared volume

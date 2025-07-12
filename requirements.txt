@@ -1,0 +1,33 @@
+# Core
+fastapi
+uvicorn
+python-dotenv
+aiohttp
+
+# SignalWire
+signalwire-relay
+signalwire
+
+# Celery
+celery
+redis
+
+# AI Services
+groq
+anthropic
+# faster-whisper dependencies below
+# Note: faster-whisper is not on PyPI, install from GitHub
+# pip install git+https://github.com/guillaumekln/faster-whisper.git
+ctranslate2
+transformers
+torch
+torchaudio
+
+# TTS
+soundfile
+numpy
+piper-tts
+
+# Utilities
+requests
+boto3
