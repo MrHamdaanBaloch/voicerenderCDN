@@ -3,3 +3,5 @@ uvicorn
 groq
 python-dotenv
 aiohttp
+numpy
+piper-tts
