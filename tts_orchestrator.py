@@ -15,7 +15,6 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger("TTSOrchestrator")
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
-TELEPHONY_CODEC = os.environ.get("TELEPHONY_CODEC", "pcm_mulaw") 
 OPTIMIZED_AUDIO_DIR = "public_audio" # Render will use this directory
 RAW_AUDIO_DIR = "temp_raw_audio"
 
@@ -46,16 +45,16 @@ def cleanup_file(path: str):
 async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> str:
     """
     Orchestrates the generation of TTS audio, trying Groq first and falling back to Piper.
-    Returns the filename of the final, optimized audio file.
+    Saves the audio file directly and returns the filename. SignalWire will handle transcoding.
     """
     request_id = str(uuid.uuid4())
-    raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
-    optimized_filename = f"{request_id}_optimized.wav"
-    optimized_filepath = os.path.join(OPTIMIZED_AUDIO_DIR, optimized_filename)
+    # We no longer need a separate "raw" and "optimized" file.
+    output_filename = f"{request_id}.wav"
+    output_filepath = os.path.join(OPTIMIZED_AUDIO_DIR, output_filename)
     
-    # Schedule cleanup of the final optimized file after 10 minutes
+    # Schedule cleanup of the final file after 10 minutes
     background_tasks.add_task(asyncio.sleep, 600)
-    background_tasks.add_task(cleanup_file, optimized_filepath)
+    background_tasks.add_task(cleanup_file, output_filepath)
 
     generation_success = False
     # --- Try Groq First ---
@@ -63,8 +62,9 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
         try:
             logger.info(f"Attempting Groq TTS for text: '{text[:30]}...'")
             tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
-            tts_response.write_to_file(raw_filepath)
-            logger.info("Groq TTS succeeded.")
+            # Write directly to the final destination
+            tts_response.write_to_file(output_filepath)
+            logger.info(f"Groq TTS succeeded. File saved to {output_filepath}")
             generation_success = True
         except Exception as e:
             logger.error(f"Groq TTS failed: {e}. Falling back to Piper.")
@@ -78,9 +78,10 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
             
             audio_bytes = await piper_tts_service.text_to_speech(text)
             if audio_bytes:
-                with open(raw_filepath, "wb") as f:
+                # Write directly to the final destination
+                with open(output_filepath, "wb") as f:
                     f.write(audio_bytes)
-                logger.info("Piper TTS succeeded.")
+                logger.info(f"Piper TTS succeeded. File saved to {output_filepath}")
                 generation_success = True
             else:
                 raise Exception("Piper TTS returned no audio bytes.")
@@ -88,21 +89,11 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
             logger.error(f"Piper TTS fallback also failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="All TTS providers failed.")
 
-    # --- Transcode the successful audio ---
-    try:
-        logger.info(f"Transcoding raw file to {TELEPHONY_CODEC} at 8kHz mono.")
-        command = ["ffmpeg", "-i", raw_filepath, "-ar", "8000", "-ac", "1", "-acodec", TELEPHONY_CODEC, "-y", optimized_filepath]
-        process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
-        _, stderr = await process.communicate()
+    if not generation_success:
+        # This case should ideally not be reached due to the exception above, but as a safeguard:
+        raise HTTPException(status_code=500, detail="TTS generation failed after all attempts.")
 
-        if process.returncode != 0:
-            logger.error(f"ffmpeg transcoding failed. STDERR: {stderr.decode()}")
-            raise Exception("ffmpeg failed.")
-        
-        logger.info("Transcoding successful.")
-        return optimized_filename
-    finally:
-        cleanup_file(raw_filepath)
+    return output_filename
 
 # --- API Endpoints ---
 @app.get("/generate-audio")

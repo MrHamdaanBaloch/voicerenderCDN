@@ -137,8 +137,9 @@ class VoiceAIAgent(Consumer):
             await call.play_tts(text="I am sorry, a system error occurred.")
 
 if __name__ == "__main__":
-    if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL]):
-        logger.critical("FATAL: Missing critical environment variables for relay server.")
+    # Ensure all critical services and credentials are provided
+    if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL, REDIS_URL]):
+        logger.critical("FATAL: Missing critical environment variables for relay server. Check SIGNALWIRE credentials, TTS_ORCHESTRATOR_URL, and REDIS_URL.")
     else:
         agent = VoiceAIAgent()
         agent.run()

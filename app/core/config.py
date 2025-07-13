@@ -28,9 +28,9 @@ def load_config():
         "REDIS_URL": os.getenv("REDIS_URL", "redis://localhost:6379/0"),
     }
 
-    # Ensure critical variables are set
+    # For the TTS service, only the Groq key is essential.
+    # Other services running elsewhere will handle their own validation.
     required_vars = [
-        "SIGNALWIRE_PROJECT_ID", "SIGNALWIRE_API_TOKEN", "SIGNALWIRE_SPACE_URL",
         "GROQ_API_KEY"
     ]
     for var in required_vars:
@@ -43,12 +43,14 @@ def load_config():
 # we can load them once here. This is a transitional step.
 # A better long-term solution is for modules to call load_config() themselves.
 _config = load_config()
-SIGNALWIRE_PROJECT_ID = _config["SIGNALWIRE_PROJECT_ID"]
-SIGNALWIRE_API_TOKEN = _config["SIGNALWIRE_API_TOKEN"]
-SIGNALWIRE_SPACE_URL = _config["SIGNALWIRE_SPACE_URL"]
-SIGNALWIRE_CONTEXT = _config["SIGNALWIRE_CONTEXT"]
-PIPER_MODEL_PATH = _config["PIPER_MODEL_PATH"]
-PIPER_CONFIG_PATH = _config["PIPER_CONFIG_PATH"]
-LLM_MODEL = _config["LLM_MODEL"]
-GROQ_API_KEY = _config["GROQ_API_KEY"]
-REDIS_URL = _config["REDIS_URL"]
+
+# Use .get() to avoid KeyErrors for optional vars in certain services
+SIGNALWIRE_PROJECT_ID = _config.get("SIGNALWIRE_PROJECT_ID")
+SIGNALWIRE_API_TOKEN = _config.get("SIGNALWIRE_API_TOKEN")
+SIGNALWIRE_SPACE_URL = _config.get("SIGNALWIRE_SPACE_URL")
+SIGNALWIRE_CONTEXT = _config.get("SIGNALWIRE_CONTEXT")
+PIPER_MODEL_PATH = _config.get("PIPER_MODEL_PATH")
+PIPER_CONFIG_PATH = _config.get("PIPER_CONFIG_PATH")
+LLM_MODEL = _config.get("LLM_MODEL")
+GROQ_API_KEY = _config.get("GROQ_API_KEY")
+REDIS_URL = _config.get("REDIS_URL")
