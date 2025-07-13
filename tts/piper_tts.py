@@ -59,18 +59,9 @@ class PiperTTS:
             return None
             
         try:
-            # Piper's synthesize method writes to a file, it does not return bytes.
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_filepath = temp_file.name
-            
-            logger.info(f"Converting to speech (sync) and writing to temp file: {temp_filepath}")
-            self.model.synthesize(text, wav_file=temp_filepath)
-            
-            # Read the bytes from the generated file
-            with open(temp_filepath, "rb") as f:
-                audio_bytes = f.read()
-            
-            os.remove(temp_filepath) # Clean up the temp file
+            # The updated synthesize method returns audio bytes directly.
+            logger.info(f"Converting to speech (sync)...")
+            audio_bytes = self.model.synthesize(text)
             logger.info(f"Piper audio generated (sync): {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
@@ -94,18 +85,9 @@ class PiperTTS:
             return None
             
         try:
-            # Piper's synthesize method writes to a file, it does not return bytes.
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_filepath = temp_file.name
-
-            logger.info(f"Converting to speech and writing to temp file: {temp_filepath}")
-            self.model.synthesize(text, wav_file=temp_filepath)
-
-            # Read the bytes from the generated file
-            with open(temp_filepath, "rb") as f:
-                audio_bytes = f.read()
-
-            os.remove(temp_filepath) # Clean up the temp file
+            # The updated synthesize method returns audio bytes directly.
+            logger.info(f"Converting to speech...")
+            audio_bytes = self.model.synthesize(text)
             logger.info(f"Piper audio generated: {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
