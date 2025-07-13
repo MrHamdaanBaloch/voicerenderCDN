@@ -55,7 +55,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
             return None # Return None if user said nothing
 
         # --- Step 3: LLM ---
-        logger.info(f"[{call.id}] Generating chat completion...")
+        logger.info(f"[{call_id}] Generating chat completion...")
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a friendly and helpful voice assistant. Keep your responses concise and conversational."},
@@ -64,7 +64,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
             model="llama3-8b-8192",
         )
         llm_response_text = chat_completion.choices[0].message.content
-        logger.info(f"[{call.id}] LLM Response: '{llm_response_text}'")
+        logger.info(f"[{call_id}] LLM Response: '{llm_response_text}'")
         
         return llm_response_text
 

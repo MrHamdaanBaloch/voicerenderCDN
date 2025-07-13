@@ -67,7 +67,8 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
             logger.info(f"Groq TTS succeeded. File saved to {output_filepath}")
             generation_success = True
         except Exception as e:
-            logger.error(f"Groq TTS failed: {e}. Falling back to Piper.")
+            logger.error(f"Groq TTS failed with exception: {e}", exc_info=True)
+            logger.info("Falling back to Piper TTS.")
 
     # --- Fallback to Piper ---
     if not generation_success:
@@ -86,7 +87,8 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
             else:
                 raise Exception("Piper TTS returned no audio bytes.")
         except Exception as e:
-            logger.error(f"Piper TTS fallback also failed: {e}", exc_info=True)
+            logger.error(f"Piper TTS fallback also failed with exception: {e}", exc_info=True)
+            # Both providers have failed at this point.
             raise HTTPException(status_code=500, detail="All TTS providers failed.")
 
     if not generation_success:
