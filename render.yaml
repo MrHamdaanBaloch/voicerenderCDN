@@ -8,7 +8,7 @@ services:
     healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
-        value: 3.11
+        value: 3.11.9
       - key: GROQ_API_KEY
         value: YOUR_API_KEY_HERE # Replace with your actual Groq API key in the Render dashboard
       - key: TELEPHONY_CODEC
