@@ -5,6 +5,7 @@ import subprocess
 import uuid
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from groq import Groq
 from dotenv import load_dotenv
 from tts.piper_tts import PiperTTS
@@ -133,5 +134,28 @@ async def get_generated_audio_url(text: str, background_tasks: BackgroundTasks):
 @app.get("/")
 def read_root():
     return {"message": "TTS Orchestrator is running."}
+
+# --- Temporary Test Endpoint ---
+@app.get("/test-audio")
+async def get_test_audio(text: str, background_tasks: BackgroundTasks):
+    """
+    A temporary endpoint for testing. Generates, transcodes, and returns
+    the audio file directly for quality checking.
+    """
+    if not text:
+        raise HTTPException(status_code=400, detail="Text parameter is required.")
+    
+    try:
+        logger.info(f"[TEST] Generating test audio for text: '{text[:30]}...'")
+        # Run the full pipeline to get the final, optimized filename
+        optimized_filename = await generate_tts_audio(text, background_tasks)
+        optimized_filepath = os.path.join(OPTIMIZED_AUDIO_DIR, optimized_filename)
+        
+        # Return the generated file as a response
+        return FileResponse(path=optimized_filepath, media_type='audio/wav', filename=optimized_filename)
+        
+    except Exception as e:
+        logger.error(f"[TEST] Test audio generation failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Test audio generation failed: {e}")
 
 logger.info("TTS Orchestrator configured.")
