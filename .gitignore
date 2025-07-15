@@ -26,3 +26,6 @@ Thumbs.db
 
 # Temporary audio files
 temp_raw_audio/
+
+# Ignore problematic submodule folder
+WORKING SIGNALRELAY/

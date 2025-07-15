@@ -9,6 +9,7 @@ from aiohttp import web
 from dotenv import load_dotenv
 import redis
 import json
+import time
 from urllib.parse import quote
 
 # --- Load Environment Variables ---
@@ -27,8 +28,7 @@ SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_CONTEXT = os.environ.get("SIGNALWIRE_CONTEXT", "voiceai")
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379/0")
 # This will now be the URL provided by Render for your TTS orchestrator
-TTS_ORCHESTRATOR_URL = os.environ.get("TTS_ORCHESTRATOR_URL") 
-WELCOME_AUDIO_FILENAME = os.environ.get("WELCOME_AUDIO_FILENAME", "welcome.wav")
+TTS_ORCHESTRATOR_URL = os.environ.get("TTS_ORCHESTRATOR_URL")
 
 # --- Service Clients ---
 try:
@@ -64,10 +64,9 @@ class VoiceAIAgent(Consumer):
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
         try:
-            # Play fast, pre-recorded welcome message from the orchestrator's static files
-            welcome_url = f"{TTS_ORCHESTRATOR_URL}/audio/{WELCOME_AUDIO_FILENAME}"
-            logger.info(f"[{call.id}] Playing welcome message: {welcome_url}")
-            await call.play_audio(url=welcome_url)
+            # Dynamically generate the welcome message using our robust, ffmpeg-powered TTS pipeline.
+            # This is the most reliable method and ensures perfect audio quality.
+            await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?")
 
             while call.active:
                 logger.info(f"[{call.id}] Listening for user input...")
@@ -141,5 +140,11 @@ if __name__ == "__main__":
     if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL, REDIS_URL]):
         logger.critical("FATAL: Missing critical environment variables for relay server. Check SIGNALWIRE credentials, TTS_ORCHESTRATOR_URL, and REDIS_URL.")
     else:
-        agent = VoiceAIAgent()
-        agent.run()
+        # Main execution loop to ensure the agent reconnects if the connection drops.
+        while True:
+            try:
+                agent = VoiceAIAgent()
+                agent.run()
+            except Exception as e:
+                logger.error(f"Agent crashed with error: {e}. Restarting in 5 seconds.")
+                time.sleep(5)
