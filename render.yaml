@@ -1,49 +1,50 @@
-# A Redis instance for Celery and caching
-- name: redis
-  type: redis
-  plan: free
+services:
+  # A Redis instance for Celery and caching
+  - name: redis
+    type: redis
+    plan: free
 
-# The TTS service that generates and serves audio files
-- name: tts-orchestrator
-  type: web
-  env: python
-  plan: free
-  buildCommand: "./render-build.sh"
-  startCommand: "uvicorn tts_orchestrator:app --host 0.0.0.0 --port $PORT"
-  healthCheckPath: /
-  envVars:
-    - key: PYTHON_VERSION
-      value: 3.11.9
-    - key: GROQ_API_KEY
-      sync: false
-    - key: TELEPHONY_CODEC
-      value: pcm_mulaw
+  # The TTS service that generates and serves audio files
+  - name: tts-orchestrator
+    type: web
+    env: python
+    plan: free
+    buildCommand: "./render-build.sh"
+    startCommand: "uvicorn tts_orchestrator:app --host 0.0.0.0 --port $PORT"
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: GROQ_API_KEY
+        sync: false
+      - key: TELEPHONY_CODEC
+        value: pcm_mulaw
 
-# The SignalWire Relay server
-- name: relay-server
-  type: worker
-  env: python
-  plan: free
-  buildCommand: "pip install -r requirements.txt"
-  startCommand: "python relay_server.py"
-  envVars:
-    - key: PYTHON_VERSION
-      value: 3.11.9
-    - key: TTS_ORCHESTRATOR_URL
-      fromService:
-        type: web
-        name: tts-orchestrator
-        property: host # Correct property for the URL
-    - key: REDIS_URL
-      fromService:
-        type: redis
-        name: redis
-        property: connectionString # Correct reference for the new Redis service
-    - key: SIGNALWIRE_PROJECT_ID
-      sync: false
-    - key: SIGNALWIRE_API_TOKEN
-      sync: false
-    - key: SIGNALWIRE_CONTEXT
-      sync: false
-    - key: GROQ_API_KEY
-      sync: false
+  # The SignalWire Relay server
+  - name: relay-server
+    type: worker
+    env: python
+    plan: free
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "python relay_server.py"
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
+      - key: TTS_ORCHESTRATOR_URL
+        fromService:
+          type: web
+          name: tts-orchestrator
+          property: host
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: redis
+          property: connectionString
+      - key: SIGNALWIRE_PROJECT_ID
+        sync: false
+      - key: SIGNALWIRE_API_TOKEN
+        sync: false
+      - key: SIGNALWIRE_CONTEXT
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
