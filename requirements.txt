@@ -5,7 +5,7 @@ python-dotenv
 aiohttp
 
 # SignalWire - The only package needed for Relay
-signalwire-relay
+signalwire
 
 # Celery and Redis for background tasks
 celery
