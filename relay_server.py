@@ -95,11 +95,12 @@ class VoiceAIAgent(Consumer):
 
     async def play_tts_response(self, call: Call, text: str):
         """Calls the TTS orchestrator to get a playable URL and plays it on the call."""
+        logger.info(f"[{call.id}] Entering play_tts_response for text: '{text[:30]}...'")
         try:
             encoded_text = quote(text)
             generation_url = f"{TTS_ORCHESTRATOR_URL}/generate-audio?text={encoded_text}"
             
-            logger.info(f"[{call.id}] Requesting audio from orchestrator: {generation_url}")
+            logger.info(f"[{call.id}] Step 1: Requesting audio from orchestrator: {generation_url}")
             async with aiohttp.ClientSession() as session:
                 async with session.get(generation_url) as response:
                     if response.status != 200:
@@ -114,9 +115,10 @@ class VoiceAIAgent(Consumer):
                 raise Exception("TTS orchestrator did not return a valid filename.")
 
             final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
-            logger.info(f"[{call.id}] Playing final audio from: {final_audio_url}")
+            logger.info(f"[{call.id}] Step 2: Successfully got audio URL: {final_audio_url}")
             
             # Implement barge-in logic
+            logger.info(f"[{call.id}] Step 3: Initiating playback and concurrent recording (barge-in).")
             play_action = await call.play_audio_async(url=final_audio_url)
             listen_action = await call.record_async(beep=False, end_silence_timeout=1.0)
             
