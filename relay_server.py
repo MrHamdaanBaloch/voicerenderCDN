@@ -49,6 +49,11 @@ class VoiceAIAgent(Consumer):
     async def ready(self):
         logger.info(f"✅ Consumer ready on context '{SIGNALWIRE_CONTEXT}'")
 
+    async def run_in_background(self):
+        """A wrapper to run the consumer's blocking run() method in an async-friendly way."""
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, self.run)
+
     async def on_incoming_call(self, call: Call):
         if call.id in self._processing_calls:
             return
@@ -137,16 +142,36 @@ class VoiceAIAgent(Consumer):
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
             await call.play_tts(text="I am sorry, a system error occurred.")
 
+async def health_check(request):
+    """A simple health check endpoint for Render."""
+    return web.Response(text="OK")
+
+async def start_agent_and_web_server():
+    """Starts the SignalWire agent and the shim web server concurrently."""
+    # Start the SignalWire consumer in the background
+    agent = VoiceAIAgent()
+    consumer_task = asyncio.create_task(agent.run_in_background())
+
+    # Start the shim web server to satisfy Render's health checks
+    app = web.Application()
+    app.router.add_get("/health", health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    # Get the port from the environment, default to 8080 for local testing
+    port = os.environ.get('PORT', 8080)
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    logger.info(f"Shim web server started on port {port}.")
+
+    # Wait for the consumer task to complete (which it shouldn't, unless it crashes)
+    await consumer_task
+
 if __name__ == "__main__":
     # Ensure all critical services and credentials are provided
     if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL, REDIS_URL]):
         logger.critical("FATAL: Missing critical environment variables for relay server. Check SIGNALWIRE credentials, TTS_ORCHESTRATOR_URL, and REDIS_URL.")
     else:
-        # Main execution loop to ensure the agent reconnects if the connection drops.
-        while True:
-            try:
-                agent = VoiceAIAgent()
-                agent.run()
-            except Exception as e:
-                logger.error(f"Agent crashed with error: {e}. Restarting in 5 seconds.")
-                time.sleep(5)
+        try:
+            asyncio.run(start_agent_and_web_server())
+        except KeyboardInterrupt:
+            logger.info("Shutting down.")
