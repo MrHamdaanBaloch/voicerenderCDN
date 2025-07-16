@@ -23,11 +23,9 @@ services:
       - key: TELEPHONY_CODEC
         value: pcm_mulaw
 
-  # 3. Free Web Service for the Relay Server
-  # We use a web service because the free worker tier is not available.
-  # The public URL for this service will not be used.
+  # 3. Free Background Worker for the Relay Server
   - name: relay-server
-    type: web
+    type: worker
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
