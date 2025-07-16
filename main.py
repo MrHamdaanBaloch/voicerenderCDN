@@ -1,0 +1,176 @@
+import logging
+import os
+import asyncio
+import subprocess
+import uuid
+import threading
+import aiohttp
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+from groq import Groq
+from dotenv import load_dotenv
+from tts.piper_tts import PiperTTS
+from signalwire.relay.consumer import Consumer
+from signalwire.relay.calling import Call
+from celery_worker.celery_app import celery_app
+from urllib.parse import quote
+
+# --- Load Environment Variables & Configuration ---
+load_dotenv()
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger("VoiceAgentService")
+
+# --- FastAPI App Setup ---
+app = FastAPI()
+
+# --- Global Configuration ---
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+TELEPHONY_CODEC = os.environ.get("TELEPHONY_CODEC", "pcm_mulaw")
+OPTIMIZED_AUDIO_DIR = "public_audio"
+RAW_AUDIO_DIR = "temp_raw_audio"
+SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
+SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
+SIGNALWIRE_CONTEXT = os.environ.get("SIGNALWIRE_CONTEXT", "voiceai")
+# The TTS_ORCHESTRATOR_URL is now the service's own public URL,
+# which we will get from the Render environment at runtime.
+TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
+
+# --- Service Clients ---
+groq_client = Groq(api_key=GROQ_API_KEY)
+piper_tts_service = PiperTTS()
+
+# --- Directory Setup ---
+for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+        logger.info(f"Created audio directory: {directory}")
+
+app.mount("/audio", StaticFiles(directory=OPTIMIZED_AUDIO_DIR), name="audio")
+
+# --- TTS Generation Logic (from tts_orchestrator.py) ---
+def cleanup_file(path: str):
+    try:
+        if os.path.exists(path): os.remove(path)
+        logger.info(f"Cleaned up file: {path}")
+    except Exception as e:
+        logger.error(f"Error cleaning up file {path}: {e}")
+
+async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> str:
+    request_id = str(uuid.uuid4())
+    raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
+    optimized_filename = f"{request_id}_optimized.wav"
+    optimized_filepath = os.path.join(OPTIMIZED_AUDIO_DIR, optimized_filename)
+    
+    background_tasks.add_task(asyncio.sleep, 600)
+    background_tasks.add_task(cleanup_file, raw_filepath)
+    background_tasks.add_task(cleanup_file, optimized_filepath)
+
+    generation_success = False
+    if GROQ_API_KEY:
+        try:
+            logger.info(f"Attempting Groq TTS for text: '{text[:30]}...'")
+            tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
+            tts_response.write_to_file(raw_filepath)
+            generation_success = True
+        except Exception as e:
+            logger.error(f"Groq TTS failed: {e}", exc_info=True)
+
+    if not generation_success:
+        try:
+            logger.info("Attempting Piper TTS fallback.")
+            if not piper_tts_service.model: await piper_tts_service.initialize()
+            audio_bytes = await piper_tts_service.text_to_speech(text)
+            if audio_bytes:
+                with open(raw_filepath, "wb") as f: f.write(audio_bytes)
+                generation_success = True
+        except Exception as e:
+            logger.error(f"Piper TTS fallback failed: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail="All TTS providers failed.")
+
+    command = ["ffmpeg", "-i", raw_filepath, "-ar", "8000", "-ac", "1", "-acodec", TELEPHONY_CODEC, "-y", optimized_filepath]
+    process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
+    _, stderr = await process.communicate()
+    if process.returncode != 0:
+        raise Exception(f"ffmpeg failed: {stderr.decode()}")
+        
+    return optimized_filename
+
+# --- SignalWire Relay Logic (from relay_server.py) ---
+class VoiceAIAgent(Consumer):
+    def setup(self):
+        self.project = SIGNALWIRE_PROJECT_ID
+        self.token = SIGNALWIRE_API_TOKEN
+        self.contexts = [SIGNALWIRE_CONTEXT]
+    
+    async def ready(self):
+        logger.info(f"✅ SignalWire Consumer ready on context '{SIGNALWIRE_CONTEXT}'")
+
+    async def on_incoming_call(self, call: Call):
+        logger.info(f"📞 Incoming call {call.id} from {call.from_number}.")
+        await call.answer()
+        asyncio.create_task(self.handle_conversation(call))
+
+    async def handle_conversation(self, call: Call):
+        logger.info(f"[{call.id}] Starting conversation.")
+        try:
+            await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?")
+            while call.active:
+                record_action = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
+                if not record_action.url: continue
+                
+                task = celery_app.send_task("get_llm_response_task", args=[call.id, record_action.url])
+                llm_response_text = task.get(timeout=15)
+                if not llm_response_text: continue
+                
+                await self.play_tts_response(call, llm_response_text)
+        except Exception as e:
+            logger.error(f"[{call.id}] Unhandled exception in conversation: {e}", exc_info=True)
+        finally:
+            logger.info(f"[{call.id}] Conversation ended.")
+
+    async def play_tts_response(self, call: Call, text: str):
+        logger.info(f"[{call.id}] Generating TTS for: '{text[:30]}...'")
+        try:
+            # We need a background task object, even if it's empty for this call
+            background_tasks = BackgroundTasks()
+            filename = await generate_tts_audio(text, background_tasks)
+            final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
+            
+            logger.info(f"[{call.id}] Playing audio from: {final_audio_url}")
+            play_action = await call.play_audio_async(url=final_audio_url)
+            listen_action = await call.record_async(beep=False, end_silence_timeout=1.0)
+            
+            await asyncio.wait([play_action.wait_for_completed(), listen_action.wait_for_completed()], return_when=asyncio.FIRST_COMPLETED)
+            
+            if listen_action.completed: await play_action.stop()
+            else: await listen_action.stop()
+        except Exception as e:
+            logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
+
+# --- FastAPI Endpoints and Startup Logic ---
+@app.get("/generate-audio")
+async def get_generated_audio_url(text: str, background_tasks: BackgroundTasks):
+    if not text: raise HTTPException(status_code=400, detail="Text is required.")
+    filename = await generate_tts_audio(text, background_tasks)
+    return {"success": True, "filename": filename}
+
+@app.get("/")
+def read_root():
+    return {"message": "Voice Agent Service is running."}
+
+@app.on_event("startup")
+def start_relay_consumer():
+    # Verify all necessary environment variables are set before starting
+    if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL]):
+        logger.critical("FATAL: Missing critical SignalWire or Render environment variables. The Relay Consumer will not start.")
+        return
+        
+    def run_agent():
+        agent = VoiceAIAgent()
+        agent.run()
+
+    # Run the SignalWire consumer in a separate thread
+    thread = threading.Thread(target=run_agent, daemon=True)
+    thread.start()
+    logger.info("SignalWire Relay Consumer started in a background thread.")
