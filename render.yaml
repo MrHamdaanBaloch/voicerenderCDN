@@ -1,5 +1,5 @@
 services:
-  # A Redis instance for Celery and caching
+  # 1. Free Redis Instance
   - name: redis
     type: redis
     plan: free
@@ -7,7 +7,7 @@ services:
       - source: 0.0.0.0/0
         description: "Allow all connections"
 
-  # The TTS service that generates and serves audio files
+  # 2. Free Web Service for TTS
   - name: tts-orchestrator
     type: web
     env: python
@@ -23,9 +23,11 @@ services:
       - key: TELEPHONY_CODEC
         value: pcm_mulaw
 
-  # The SignalWire Relay server
+  # 3. Free Web Service for the Relay Server
+  # We use a web service because the free worker tier is not available.
+  # The public URL for this service will not be used.
   - name: relay-server
-    type: worker
+    type: web
     env: python
     plan: free
     buildCommand: "pip install -r requirements.txt"
