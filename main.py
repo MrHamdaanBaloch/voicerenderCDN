@@ -167,7 +167,12 @@ def start_relay_consumer():
         return
         
     def run_agent():
+        # Create a new event loop for the new thread
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
         agent = VoiceAIAgent()
+        # The run() method is blocking, so it will run forever in this loop.
         agent.run()
 
     # Run the SignalWire consumer in a separate thread
