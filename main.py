@@ -123,23 +123,36 @@ class VoiceAIAgent(Consumer):
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
         try:
-            # Use fast, built-in TTS for the initial welcome message (use_groq_pipeline=False)
-            await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
+            # The play_tts_response function now returns a recording if a barge-in occurs.
+            barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
             
+            recording_to_process = barge_in_recording
+
             while call.active:
-                record_action = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
-                if not record_action.url:
+                # If there was no barge-in on the last playback, we need to listen for the user's speech now.
+                if not recording_to_process:
+                    logger.info(f"[{call.id}] Listening for user input...")
+                    recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
+
+                # If we have no recording from either barge-in or normal listening, loop again.
+                if not recording_to_process or not recording_to_process.url:
                     logger.warning(f"[{call.id}] Recording was empty or failed.")
+                    recording_to_process = None # Reset for the next loop
                     continue
                 
-                task = celery_app.send_task("get_llm_response_task", args=[call.id, record_action.url])
+                # We have a recording, send it to Celery.
+                task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url])
                 llm_response_text = task.get(timeout=15)
+                
+                # Reset for the next loop.
+                recording_to_process = None
+
                 if not llm_response_text:
                     logger.error(f"[{call.id}] Worker failed to produce LLM text.")
                     continue
                 
-                # Use the high-quality Groq pipeline for all subsequent AI responses
-                await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
+                # Play the LLM response and listen for the next barge-in.
+                recording_to_process = await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
         except Exception as e:
             logger.error(f"[{call.id}] Unhandled exception in conversation: {e}", exc_info=True)
         finally:
@@ -147,31 +160,57 @@ class VoiceAIAgent(Consumer):
 
     async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
+        
+        play_finished_event = asyncio.Event()
+        record_finished_event = asyncio.Event()
+
+        async def on_play_finished(action):
+            play_finished_event.set()
+
+        async def on_record_finished(action):
+            record_finished_event.set()
+
         try:
-            result = None
+            call.on('play.finished', on_play_finished)
+            call.on('play.error', on_play_finished)
+            call.on('record.finished', on_record_finished)
+
             if use_groq_pipeline:
-                # --- High-Quality Groq/ffmpeg Pipeline ---
                 background_tasks = BackgroundTasks()
                 filename = await generate_tts_audio(text, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
-                logger.info(f"[{call.id}] Prompting with high-quality audio from: {final_audio_url}")
-                # Use the synchronous, blocking prompt method. This is the only supported way.
-                result = await call.prompt_audio(prompt_type='speech', url=final_audio_url, end_silence_timeout=1.0)
+                play_action = await call.play_audio_async(url=final_audio_url)
             else:
-                # --- Fast, Built-in SignalWire TTS ---
-                logger.info(f"[{call.id}] Prompting with fast, built-in TTS.")
-                # Use the synchronous, blocking prompt method.
-                result = await call.prompt_tts(prompt_type='speech', text=text, end_silence_timeout=1.0)
+                play_action = await call.play_tts_async(text=text)
 
-            # The prompt is over. Check the result to see if the user spoke.
-            if result.successful and result.result:
-                 logger.info(f"[{call.id}] Barge-in detected. User said: {result.result}")
+            record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
+
+            play_waiter = asyncio.create_task(play_finished_event.wait())
+            record_waiter = asyncio.create_task(record_finished_event.wait())
+            
+            done, pending = await asyncio.wait([play_waiter, record_waiter], return_when=asyncio.FIRST_COMPLETED)
+
+            for task in pending:
+                task.cancel()
+
+            if record_waiter in done:
+                logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
+                await play_action.stop()
+                # Wait for the recording to complete and return the final result.
+                return await record_action.completed
             else:
-                 logger.info(f"[{call.id}] Prompt finished without barge-in.")
+                logger.info(f"[{call.id}] Playback finished. Stopping listener.")
+                await record_action.stop()
+                return None
 
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
             await call.play_tts(text="I am sorry, a system error occurred.")
+            return None
+        finally:
+            call.off('play.finished', on_play_finished)
+            call.off('play.error', on_play_finished)
+            call.off('record.finished', on_record_finished)
 
 # --- FastAPI Endpoints and Startup Logic ---
 @app.get("/generate-audio")
