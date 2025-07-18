@@ -138,36 +138,46 @@ class VoiceAIAgent(Consumer):
 
     async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
+        
+        play_finished_event = asyncio.Event()
+        record_finished_event = asyncio.Event()
+
+        async def on_play_finished(action):
+            logger.info(f"[{call.id}] Playback finished event received.")
+            play_finished_event.set()
+
+        async def on_record_finished(action):
+            logger.info(f"[{call.id}] Recording finished event received.")
+            record_finished_event.set()
+
         try:
+            # Register event listeners
+            call.on('play.finished', on_play_finished)
+            call.on('play.error', on_play_finished) # Treat error as finished
+            call.on('record.finished', on_record_finished)
+            call.on('record.no_input', on_record_finished) # Treat no_input as finished
+
             if use_groq_pipeline:
-                # --- High-Quality Groq/ffmpeg Pipeline ---
                 background_tasks = BackgroundTasks()
                 filename = await generate_tts_audio(text, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
                 logger.info(f"[{call.id}] Playing high-quality audio from: {final_audio_url}")
                 play_action = await call.play_audio_async(url=final_audio_url)
             else:
-                # --- Fast, Built-in SignalWire TTS ---
                 logger.info(f"[{call.id}] Playing fast, built-in TTS.")
                 play_action = await call.play_tts_async(text=text)
 
             record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
 
-            # --- Definitive Barge-In Logic (Based on Official Docs) ---
-            # The officially documented way to wait for an action is to await its '.completed' future.
-            play_waiter = asyncio.create_task(play_action.completed)
-            record_waiter = asyncio.create_task(record_action.completed)
+            # Wait for either of our manual events to be set
+            play_waiter = asyncio.create_task(play_finished_event.wait())
+            record_waiter = asyncio.create_task(record_finished_event.wait())
+            
+            done, pending = await asyncio.wait([play_waiter, record_waiter], return_when=asyncio.FIRST_COMPLETED)
 
-            done, pending = await asyncio.wait(
-                [play_waiter, record_waiter],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            # Clean up the task that did not complete.
             for task in pending:
                 task.cancel()
 
-            # Check which action's '.completed' future finished first.
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
@@ -178,6 +188,12 @@ class VoiceAIAgent(Consumer):
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
             await call.play_tts(text="I am sorry, a system error occurred.")
+        finally:
+            # CRITICAL: Unregister event listeners to prevent duplicates on the next turn
+            call.off('play.finished', on_play_finished)
+            call.off('play.error', on_play_finished)
+            call.off('record.finished', on_record_finished)
+            call.off('record.no_input', on_record_finished)
 
 # --- FastAPI Endpoints and Startup Logic ---
 @app.get("/generate-audio")
