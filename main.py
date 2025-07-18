@@ -114,58 +114,70 @@ class VoiceAIAgent(Consumer):
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
         try:
-            await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?")
+            # Use fast, built-in TTS for the initial welcome message (use_groq_pipeline=False)
+            await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
+            
             while call.active:
                 record_action = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
-                if not record_action.url: continue
+                if not record_action.url:
+                    logger.warning(f"[{call.id}] Recording was empty or failed.")
+                    continue
                 
                 task = celery_app.send_task("get_llm_response_task", args=[call.id, record_action.url])
                 llm_response_text = task.get(timeout=15)
-                if not llm_response_text: continue
+                if not llm_response_text:
+                    logger.error(f"[{call.id}] Worker failed to produce LLM text.")
+                    continue
                 
-                await self.play_tts_response(call, llm_response_text)
+                # Use the high-quality Groq pipeline for all subsequent AI responses
+                await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
         except Exception as e:
             logger.error(f"[{call.id}] Unhandled exception in conversation: {e}", exc_info=True)
         finally:
             logger.info(f"[{call.id}] Conversation ended.")
 
-    async def play_tts_response(self, call: Call, text: str):
-        logger.info(f"[{call.id}] Generating TTS for: '{text[:30]}...'")
+    async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
+        logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         try:
-            # We need a background task object, even if it's empty for this call
-            background_tasks = BackgroundTasks()
-            filename = await generate_tts_audio(text, background_tasks)
-            final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
-            logger.info(f"[{call.id}] Playing audio from: {final_audio_url}")
+            if use_groq_pipeline:
+                # --- High-Quality Groq/ffmpeg Pipeline ---
+                background_tasks = BackgroundTasks()
+                filename = await generate_tts_audio(text, background_tasks)
+                final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
+                logger.info(f"[{call.id}] Playing high-quality audio from: {final_audio_url}")
+                play_action = await call.play_audio_async(url=final_audio_url)
+            else:
+                # --- Fast, Built-in SignalWire TTS ---
+                logger.info(f"[{call.id}] Playing fast, built-in TTS.")
+                play_action = await call.play_tts_async(text=text)
 
-            play_action = await call.play_audio_async(url=final_audio_url)
             record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
 
-            # Create tasks to wait for the completion of play and record actions
-            # by listening for the corresponding events on the call, as per official documentation.
-            play_waiter = asyncio.create_task(call.wait_for('play.finished', 'play.error'))
-            record_waiter = asyncio.create_task(call.wait_for('record.finished', 'record.no_input'))
+            # --- Official Barge-In Logic ---
+            # Create a waiter for each possible completion event, since wait_for only takes one.
+            play_finished_waiter = asyncio.create_task(call.wait_for('play.finished'))
+            play_error_waiter = asyncio.create_task(call.wait_for('play.error'))
+            record_finished_waiter = asyncio.create_task(call.wait_for('record.finished'))
+            record_no_input_waiter = asyncio.create_task(call.wait_for('record.no_input'))
 
-            done, pending = await asyncio.wait(
-                [play_waiter, record_waiter],
-                return_when=asyncio.FIRST_COMPLETED
-            )
+            play_waiters = [play_finished_waiter, play_error_waiter]
+            record_waiters = [record_finished_waiter, record_no_input_waiter]
+            all_waiters = play_waiters + record_waiters
 
-            # Cancel the pending task to avoid it hanging
+            done, pending = await asyncio.wait(all_waiters, return_when=asyncio.FIRST_COMPLETED)
+
             for task in pending:
                 task.cancel()
 
-            # Check which waiter finished to determine if it was a barge-in
-            if record_waiter in done:
+            if any(task in record_waiters for task in done):
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-            else: # play_waiter in done
+            else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
                 await record_action.stop()
 
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
-            # Fallback in case of error
             await call.play_tts(text="I am sorry, a system error occurred.")
 
 # --- FastAPI Endpoints and Startup Logic ---
