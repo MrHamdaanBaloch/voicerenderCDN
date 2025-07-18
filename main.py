@@ -155,7 +155,7 @@ class VoiceAIAgent(Consumer):
             call.on('play.finished', on_play_finished)
             call.on('play.error', on_play_finished) # Treat error as finished
             call.on('record.finished', on_record_finished)
-            call.on('record.no_input', on_record_finished) # Treat no_input as finished
+            # The bug was treating 'no_input' as a barge-in. It is now correctly ignored.
 
             if use_groq_pipeline:
                 background_tasks = BackgroundTasks()
@@ -193,7 +193,6 @@ class VoiceAIAgent(Consumer):
             call.off('play.finished', on_play_finished)
             call.off('play.error', on_play_finished)
             call.off('record.finished', on_record_finished)
-            call.off('record.no_input', on_record_finished)
 
 # --- FastAPI Endpoints and Startup Logic ---
 @app.get("/generate-audio")
