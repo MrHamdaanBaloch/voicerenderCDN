@@ -65,7 +65,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
         llm_start_time = time.monotonic()
         chat_completion = groq_client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "You are a friendly and helpful voice assistant. Keep your responses concise and conversational."},
+                {"role": "system", "content": "You are a human-like voice assistant. Your responses MUST be short, warm, and conversational. NEVER exceed 35 words. Be helpful, but get straight to the point."},
                 {"role": "user", "content": transcript_text},
             ],
             model="llama3-8b-8192",

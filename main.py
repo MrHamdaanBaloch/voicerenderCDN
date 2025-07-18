@@ -148,41 +148,27 @@ class VoiceAIAgent(Consumer):
     async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         try:
+            prompt_action = None
             if use_groq_pipeline:
                 # --- High-Quality Groq/ffmpeg Pipeline ---
                 background_tasks = BackgroundTasks()
                 filename = await generate_tts_audio(text, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
-                logger.info(f"[{call.id}] Playing high-quality audio from: {final_audio_url}")
-                play_action = await call.play_audio_async(url=final_audio_url)
+                logger.info(f"[{call.id}] Prompting with high-quality audio from: {final_audio_url}")
+                # Use prompt_audio to play and listen simultaneously
+                prompt_action = await call.prompt_audio_async(url=final_audio_url, end_silence_timeout=1.0)
             else:
                 # --- Fast, Built-in SignalWire TTS ---
-                logger.info(f"[{call.id}] Playing fast, built-in TTS.")
-                play_action = await call.play_tts_async(text=text)
+                logger.info(f"[{call.id}] Prompting with fast, built-in TTS.")
+                # Use prompt_tts to play and listen simultaneously
+                prompt_action = await call.prompt_tts_async(text=text, end_silence_timeout=1.0)
 
-            record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
-
-            # --- Definitive Barge-In Logic (Based on Official Docs) ---
-            # The officially documented way to wait for an action is to await its '.completed' future.
-            play_waiter = asyncio.create_task(play_action.completed)
-            record_waiter = asyncio.create_task(record_action.completed)
-
-            done, pending = await asyncio.wait(
-                [play_waiter, record_waiter],
-                return_when=asyncio.FIRST_COMPLETED
-            )
-
-            # Clean up the task that did not complete.
-            for task in pending:
-                task.cancel()
-
-            # Check which action's '.completed' future finished first.
-            if record_waiter in done:
-                logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
-                await play_action.stop()
+            # Wait for the prompt to complete (either by finishing playback or by user interruption)
+            result = await prompt_action.completed
+            if result.type == 'speech':
+                 logger.info(f"[{call.id}] Barge-in detected during prompt.")
             else:
-                logger.info(f"[{call.id}] Playback finished. Stopping listener.")
-                await record_action.stop()
+                 logger.info(f"[{call.id}] Prompt finished without barge-in.")
 
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
