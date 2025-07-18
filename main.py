@@ -155,13 +155,13 @@ class VoiceAIAgent(Consumer):
                 filename = await generate_tts_audio(text, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
                 logger.info(f"[{call.id}] Prompting with high-quality audio from: {final_audio_url}")
-                # Use prompt_audio to play and listen simultaneously
-                prompt_action = await call.prompt_audio_async(url=final_audio_url, end_silence_timeout=1.0)
+                # Use prompt_audio to play and listen simultaneously for speech.
+                prompt_action = await call.prompt_audio_async(prompt_type='speech', url=final_audio_url, end_silence_timeout=1.0)
             else:
                 # --- Fast, Built-in SignalWire TTS ---
                 logger.info(f"[{call.id}] Prompting with fast, built-in TTS.")
-                # Use prompt_tts to play and listen simultaneously
-                prompt_action = await call.prompt_tts_async(text=text, end_silence_timeout=1.0)
+                # Use prompt_tts to play and listen simultaneously for speech.
+                prompt_action = await call.prompt_tts_async(prompt_type='speech', text=text, end_silence_timeout=1.0)
 
             # Wait for the prompt to complete (either by finishing playback or by user interruption)
             result = await prompt_action.completed
