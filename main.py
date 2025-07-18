@@ -136,17 +136,37 @@ class VoiceAIAgent(Consumer):
             background_tasks = BackgroundTasks()
             filename = await generate_tts_audio(text, background_tasks)
             final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
-            
             logger.info(f"[{call.id}] Playing audio from: {final_audio_url}")
+
             play_action = await call.play_audio_async(url=final_audio_url)
-            listen_action = await call.record_async(beep=False, end_silence_timeout=1.0)
-            
-            await asyncio.wait([play_action.wait_for_completed(), listen_action.wait_for_completed()], return_when=asyncio.FIRST_COMPLETED)
-            
-            if listen_action.completed: await play_action.stop()
-            else: await listen_action.stop()
+            record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
+
+            # Create tasks to wait for the completion of play and record actions
+            # by listening for the corresponding events on the call, as per official documentation.
+            play_waiter = asyncio.create_task(call.wait_for('play.finished', 'play.error'))
+            record_waiter = asyncio.create_task(call.wait_for('record.finished', 'record.no_input'))
+
+            done, pending = await asyncio.wait(
+                [play_waiter, record_waiter],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # Cancel the pending task to avoid it hanging
+            for task in pending:
+                task.cancel()
+
+            # Check which waiter finished to determine if it was a barge-in
+            if record_waiter in done:
+                logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
+                await play_action.stop()
+            else: # play_waiter in done
+                logger.info(f"[{call.id}] Playback finished. Stopping listener.")
+                await record_action.stop()
+
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
+            # Fallback in case of error
+            await call.play_tts(text="I am sorry, a system error occurred.")
 
 # --- FastAPI Endpoints and Startup Logic ---
 @app.get("/generate-audio")
