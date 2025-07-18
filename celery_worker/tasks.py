@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 from celery import shared_task
 from dotenv import load_dotenv
 import io
@@ -45,10 +46,15 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
         
         # --- Step 2: STT ---
         logger.info(f"[{call_id}] Transcribing audio...")
+        stt_start_time = time.monotonic()
         transcription = groq_client.audio.transcriptions.create(
             file=(audio_buffer.name, audio_buffer.read()),
             model="whisper-large-v3"
         )
+        stt_end_time = time.monotonic()
+        stt_latency = (stt_end_time - stt_start_time) * 1000
+        logger.info(f"[{call_id}] Groq STT Latency: {stt_latency:.2f} ms")
+        
         transcript_text = transcription.text
         logger.info(f"[{call_id}] Transcript: '{transcript_text}'")
         if not transcript_text.strip():
@@ -56,6 +62,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
 
         # --- Step 3: LLM ---
         logger.info(f"[{call_id}] Generating chat completion...")
+        llm_start_time = time.monotonic()
         chat_completion = groq_client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a friendly and helpful voice assistant. Keep your responses concise and conversational."},
@@ -63,6 +70,10 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
             ],
             model="llama3-8b-8192",
         )
+        llm_end_time = time.monotonic()
+        llm_latency = (llm_end_time - llm_start_time) * 1000
+        logger.info(f"[{call_id}] Groq LLM Latency: {llm_latency:.2f} ms")
+
         llm_response_text = chat_completion.choices[0].message.content
         logger.info(f"[{call_id}] LLM Response: '{llm_response_text}'")
         

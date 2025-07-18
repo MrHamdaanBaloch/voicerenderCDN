@@ -1,6 +1,7 @@
 import logging
 import os
 import asyncio
+import time
 import subprocess
 import uuid
 import threading
@@ -70,8 +71,12 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
     if GROQ_API_KEY:
         try:
             logger.info(f"Attempting Groq TTS for text: '{text[:30]}...'")
+            tts_start_time = time.monotonic()
             tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
             tts_response.write_to_file(raw_filepath)
+            tts_end_time = time.monotonic()
+            tts_latency = (tts_end_time - tts_start_time) * 1000
+            logger.info(f"Groq TTS Latency: {tts_latency:.2f} ms")
             generation_success = True
         except Exception as e:
             logger.error(f"Groq TTS failed: {e}", exc_info=True)
@@ -88,11 +93,15 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
             logger.error(f"Piper TTS fallback failed: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail="All TTS providers failed.")
 
+    ffmpeg_start_time = time.monotonic()
     command = ["ffmpeg", "-i", raw_filepath, "-ar", "8000", "-ac", "1", "-acodec", TELEPHONY_CODEC, "-y", optimized_filepath]
     process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
     _, stderr = await process.communicate()
     if process.returncode != 0:
         raise Exception(f"ffmpeg failed: {stderr.decode()}")
+    ffmpeg_end_time = time.monotonic()
+    ffmpeg_latency = (ffmpeg_end_time - ffmpeg_start_time) * 1000
+    logger.info(f"ffmpeg Transcoding Latency: {ffmpeg_latency:.2f} ms")
         
     return optimized_filename
 
