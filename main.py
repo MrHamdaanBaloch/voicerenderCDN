@@ -153,23 +153,22 @@ class VoiceAIAgent(Consumer):
 
             record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
 
-            # --- Official Barge-In Logic ---
-            # Create a waiter for each possible completion event, since wait_for only takes one.
-            play_finished_waiter = asyncio.create_task(call.wait_for('play.finished'))
-            play_error_waiter = asyncio.create_task(call.wait_for('play.error'))
-            record_finished_waiter = asyncio.create_task(call.wait_for('record.finished'))
-            record_no_input_waiter = asyncio.create_task(call.wait_for('record.no_input'))
+            # --- Definitive Barge-In Logic (Based on Official Docs) ---
+            # The officially documented way to wait for an action is to await its '.completed' future.
+            play_waiter = asyncio.create_task(play_action.completed)
+            record_waiter = asyncio.create_task(record_action.completed)
 
-            play_waiters = [play_finished_waiter, play_error_waiter]
-            record_waiters = [record_finished_waiter, record_no_input_waiter]
-            all_waiters = play_waiters + record_waiters
+            done, pending = await asyncio.wait(
+                [play_waiter, record_waiter],
+                return_when=asyncio.FIRST_COMPLETED
+            )
 
-            done, pending = await asyncio.wait(all_waiters, return_when=asyncio.FIRST_COMPLETED)
-
+            # Clean up the task that did not complete.
             for task in pending:
                 task.cancel()
 
-            if any(task in record_waiters for task in done):
+            # Check which action's '.completed' future finished first.
+            if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
             else:
