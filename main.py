@@ -148,22 +148,22 @@ class VoiceAIAgent(Consumer):
     async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         try:
-            action = None
+            result = None
             if use_groq_pipeline:
                 # --- High-Quality Groq/ffmpeg Pipeline ---
                 background_tasks = BackgroundTasks()
                 filename = await generate_tts_audio(text, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
                 logger.info(f"[{call.id}] Prompting with high-quality audio from: {final_audio_url}")
-                action = await call.prompt_audio_async(prompt_type='speech', url=final_audio_url, end_silence_timeout=1.0)
+                # Use the synchronous, blocking prompt method. This is the only supported way.
+                result = await call.prompt_audio(prompt_type='speech', url=final_audio_url, end_silence_timeout=1.0)
             else:
                 # --- Fast, Built-in SignalWire TTS ---
                 logger.info(f"[{call.id}] Prompting with fast, built-in TTS.")
-                action = await call.prompt_tts_async(prompt_type='speech', text=text, end_silence_timeout=1.0)
+                # Use the synchronous, blocking prompt method.
+                result = await call.prompt_tts(prompt_type='speech', text=text, end_silence_timeout=1.0)
 
-            # Await the action object itself. It will resolve with the result when the prompt is done.
-            result = await action
-            
+            # The prompt is over. Check the result to see if the user spoke.
             if result.successful and result.type == 'speech':
                  logger.info(f"[{call.id}] Barge-in detected. User said: {result.result}")
             else:
