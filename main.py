@@ -164,7 +164,7 @@ class VoiceAIAgent(Consumer):
                 result = await call.prompt_tts(prompt_type='speech', text=text, end_silence_timeout=1.0)
 
             # The prompt is over. Check the result to see if the user spoke.
-            if result.successful and result.type == 'speech':
+            if result.successful and result.result:
                  logger.info(f"[{call.id}] Barge-in detected. User said: {result.result}")
             else:
                  logger.info(f"[{call.id}] Prompt finished without barge-in.")
