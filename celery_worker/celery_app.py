@@ -21,6 +21,13 @@ celery_app.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    # Add SSL options for rediss:// connection on Render
+    broker_connection_options={
+        "ssl_cert_reqs": "CERT_NONE"
+    },
+    result_backend_transport_options={
+        "ssl_cert_reqs": "CERT_NONE"
+    }
 )
 
 if __name__ == '__main__':
