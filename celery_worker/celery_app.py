@@ -4,7 +4,9 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-redis_url = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+redis_url = os.getenv("REDIS_URL")
+if not redis_url:
+    raise ValueError("FATAL: REDIS_URL environment variable is not set. Celery cannot start.")
 
 celery_app = Celery(
     'auravoice',
