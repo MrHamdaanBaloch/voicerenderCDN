@@ -196,8 +196,8 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                # CRITICAL FIX: Wait for the recording to complete to get the final result with the URL.
-                return await record_action.completed
+                # CRITICAL FIX: Return the action object itself, which contains the result.
+                return record_action
             else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
                 await record_action.stop()
