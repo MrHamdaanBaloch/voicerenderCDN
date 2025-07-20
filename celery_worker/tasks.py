@@ -38,9 +38,16 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
 
     try:
         # --- Step 1: Download audio ---
+        logger.info(f"[{call_id}] Attempting to download audio from SignalWire...")
+        download_start_time = time.monotonic()
         auth = (os.environ["SIGNALWIRE_PROJECT_ID"], os.environ["SIGNALWIRE_API_TOKEN"])
-        response = requests.get(recording_url, auth=auth, timeout=15)
+        # Reduce timeout to 10s to avoid causing a full Celery task timeout.
+        response = requests.get(recording_url, auth=auth, timeout=10)
         response.raise_for_status()
+        download_end_time = time.monotonic()
+        download_latency = (download_end_time - download_start_time) * 1000
+        logger.info(f"[{call_id}] Audio downloaded in {download_latency:.2f} ms.")
+        
         audio_buffer = io.BytesIO(response.content)
         audio_buffer.name = "recording.wav"
         
