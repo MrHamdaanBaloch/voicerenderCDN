@@ -1,3 +1,4 @@
+# --- VERSION: FINAL_DEBUG_V1 ---
 import os
 from celery import Celery
 from dotenv import load_dotenv
