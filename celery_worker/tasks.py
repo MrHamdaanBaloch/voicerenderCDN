@@ -56,7 +56,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
         stt_start_time = time.monotonic()
         transcription = groq_client.audio.transcriptions.create(
             file=(audio_buffer.name, audio_buffer.read()),
-            model="whisper-large-v3"
+            model="distil-whisper-large-v3-en"
         )
         stt_end_time = time.monotonic()
         stt_latency = (stt_end_time - stt_start_time) * 1000
