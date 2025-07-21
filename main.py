@@ -16,6 +16,18 @@ from signalwire.relay.consumer import Consumer
 from signalwire.relay.calling import Call
 from celery_worker.celery_app import celery_app
 from urllib.parse import quote
+import ssl
+
+# --- Explicitly configure Celery for Render's secure Redis ---
+# This is critical for the producer (main.py) running on Render.
+celery_app.conf.update(
+    broker_connection_options={
+        'ssl_cert_reqs': ssl.CERT_NONE
+    },
+    result_backend_transport_options={
+        'ssl_cert_reqs': ssl.CERT_NONE
+    }
+)
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()

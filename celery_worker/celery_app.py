@@ -1,7 +1,7 @@
-# Cache-busting comment to force a clean build on Render: 2025-07-21-v2
 import os
 from celery import Celery
 from dotenv import load_dotenv
+import ssl
 
 load_dotenv()
 
@@ -16,20 +16,25 @@ celery_app = Celery(
     include=['celery_worker.tasks']
 )
 
+# Basic Celery settings
 celery_app.conf.update(
     task_serializer='json',
     accept_content=['json'],
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
-    # Add SSL options for rediss:// connection on Render
-    broker_connection_options={
-        "ssl_cert_reqs": "CERT_NONE"
-    },
-    result_backend_transport_options={
-        "ssl_cert_reqs": "CERT_NONE"
-    }
 )
+
+# Apply SSL settings only if using a secure 'rediss://' URL
+if redis_url.startswith("rediss://"):
+    celery_app.conf.update(
+        broker_connection_options={
+            'ssl_cert_reqs': ssl.CERT_NONE
+        },
+        result_backend_transport_options={
+            'ssl_cert_reqs': ssl.CERT_NONE
+        }
+    )
 
 if __name__ == '__main__':
     celery_app.start()
