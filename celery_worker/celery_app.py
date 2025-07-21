@@ -25,11 +25,12 @@ celery_app.conf.update(
     enable_utc=True,
 )
 
-# Apply SSL settings by appending them directly to the URL for maximum compatibility.
-if redis_url.startswith("rediss://"):
+# Idempotently apply SSL settings to the URL for maximum compatibility.
+# This prevents duplicate parameters if the env var already has them.
+if redis_url.startswith("rediss://") and "ssl_cert_reqs" not in redis_url:
     redis_url = f"{redis_url}?ssl_cert_reqs=none"
 
-# Update the broker and backend URLs with the potentially modified URL
+# Update the broker and backend URLs with the correctly formatted URL
 celery_app.conf.broker_url = redis_url
 celery_app.conf.result_backend = redis_url
 
