@@ -25,10 +25,11 @@ except Exception as e:
     groq_client = None
 
 @shared_task(name="get_llm_response_task", bind=True, max_retries=3, default_retry_delay=5)
-def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
+def get_llm_response_task(self, call_id: str, recording_url: str, conversation_history: list) -> dict | None:
     """
     This task takes a user's voice recording, transcribes it, gets a response
-    from an LLM, and returns the text response. It does NOT handle TTS.
+    from an LLM with conversation history, and returns both the LLM response
+    and the user's transcript.
     """
     if not groq_client:
         logger.error(f"[{call_id}] Groq client not available. Retrying task...")
@@ -68,13 +69,17 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
             return None # Return None if user said nothing
 
         # --- Step 3: LLM ---
-        logger.info(f"[{call_id}] Generating chat completion...")
+        logger.info(f"[{call_id}] Generating chat completion with history...")
         llm_start_time = time.monotonic()
+        
+        messages = [
+            {"role": "system", "content": "You are a human-like voice assistant. Your responses MUST be short, warm, and conversational. NEVER exceed 35 words. Be helpful, but get straight to the point."}
+        ]
+        messages.extend(conversation_history)
+        messages.append({"role": "user", "content": transcript_text})
+
         chat_completion = groq_client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a human-like voice assistant. Your responses MUST be short, warm, and conversational. NEVER exceed 35 words. Be helpful, but get straight to the point."},
-                {"role": "user", "content": transcript_text},
-            ],
+            messages=messages,
             model="llama3-8b-8192",
         )
         llm_end_time = time.monotonic()
@@ -84,7 +89,10 @@ def get_llm_response_task(self, call_id: str, recording_url: str) -> str | None:
         llm_response_text = chat_completion.choices[0].message.content
         logger.info(f"[{call_id}] LLM Response: '{llm_response_text}'")
         
-        return llm_response_text
+        return {
+            "llm_response": llm_response_text,
+            "user_transcript": transcript_text
+        }
 
     except Exception as e:
         logger.error(f"[{call.id}] Unhandled exception in Celery STT/LLM task: {e}", exc_info=True)

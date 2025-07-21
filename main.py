@@ -1,4 +1,3 @@
-# --- VERSION: FINAL_DEBUG_V1 ---
 import logging
 import os
 import asyncio
@@ -18,6 +17,8 @@ from signalwire.relay.calling import Call
 from celery_worker.celery_app import celery_app
 from urllib.parse import quote
 from types import SimpleNamespace
+import redis
+import json
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -42,6 +43,7 @@ TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
 # --- Service Clients ---
 groq_client = Groq(api_key=GROQ_API_KEY)
 piper_tts_service = PiperTTS()
+redis_client = redis.from_url(os.environ["REDIS_URL"])
 
 # --- Directory Setup ---
 for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
@@ -124,6 +126,7 @@ class VoiceAIAgent(Consumer):
 
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
+        redis_key = f"conversation:{call.id}"
         try:
             # The play_tts_response function now returns a recording if a barge-in occurs.
             barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
@@ -137,7 +140,7 @@ class VoiceAIAgent(Consumer):
                     recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
                 # If we have no recording, or the recording is invalid or too short, discard and loop again.
-                MIN_DURATION_S = 0.4 # 400ms
+                MIN_DURATION_S = 0.8 # 800ms - A more robust threshold to filter out noise.
                 if not recording_to_process or not getattr(recording_to_process, 'url', None) or getattr(recording_to_process, 'duration', 0) < MIN_DURATION_S:
                     if recording_to_process:
                         logger.warning(f"[{call.id}] Discarding recording (duration: {getattr(recording_to_process, 'duration', 0)}s) - too short.")
@@ -146,10 +149,22 @@ class VoiceAIAgent(Consumer):
                     recording_to_process = None # Reset for the next loop
                     continue
                 
-                # We have a recording, send it to Celery.
-                task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url])
-                llm_response_text = task.get(timeout=15)
+                # We have a recording, retrieve history and send to Celery.
+                history_json = redis_client.get(redis_key)
+                conversation_history = json.loads(history_json) if history_json else []
                 
+                task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url, conversation_history])
+                task_result = task.get(timeout=15)
+                
+                llm_response_text = task_result.get('llm_response')
+                user_transcript = task_result.get('user_transcript')
+
+                # Update conversation history in Redis
+                if user_transcript:
+                    conversation_history.append({"role": "user", "content": user_transcript})
+                    conversation_history.append({"role": "assistant", "content": llm_response_text})
+                    redis_client.set(redis_key, json.dumps(conversation_history), ex=3600) # 1-hour expiry
+
                 # Reset for the next loop.
                 recording_to_process = None
 
@@ -190,7 +205,8 @@ class VoiceAIAgent(Consumer):
             else:
                 play_action = await call.play_tts_async(text=text)
 
-            record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
+            # Use a shorter silence timeout for barge-in to be more responsive.
+            record_action = await call.record_async(beep=False, end_silence_timeout=0.7)
 
             play_waiter = asyncio.create_task(play_finished_event.wait())
             record_waiter = asyncio.create_task(record_result_queue.get())
@@ -230,22 +246,6 @@ async def get_generated_audio_url(text: str, background_tasks: BackgroundTasks):
 @app.get("/")
 def read_root():
     return {"message": "Voice Agent Service is running."}
-
-@app.get("/debug-view-code")
-def debug_view_code():
-    """A temporary endpoint to view the deployed code on Render."""
-    try:
-        with open("main.py", "r") as f:
-            main_py_content = f.read()
-        with open("celery_worker/celery_app.py", "r") as f:
-            celery_app_py_content = f.read()
-        return {
-            "message": "Currently deployed code. Verify the VERSION markers.",
-            "main.py": main_py_content,
-            "celery_worker/celery_app.py": celery_app_py_content
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Could not read code files: {e}")
 
 @app.on_event("startup")
 def start_relay_consumer():
