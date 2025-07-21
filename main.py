@@ -162,15 +162,17 @@ class VoiceAIAgent(Consumer):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         
         play_finished_event = asyncio.Event()
-        # Use a queue to safely pass the recording result from the event handler
         record_result_queue = asyncio.Queue()
 
         async def on_play_finished(action):
             play_finished_event.set()
 
-        async def on_record_finished(action):
-            # Put the final, completed action into the queue
-            await record_result_queue.put(action)
+        async def on_record_finished(action_dict):
+            # The event returns a dict, so we reconstruct the RecordAction object
+            # This is the definitive fix for the 'dict' object has no attribute 'url' error
+            from signalwire.relay.calling import RecordAction
+            reconstructed_action = RecordAction.from_dict(action_dict)
+            await record_result_queue.put(reconstructed_action)
 
         try:
             call.on('play.finished', on_play_finished)
@@ -187,7 +189,6 @@ class VoiceAIAgent(Consumer):
 
             record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
 
-            # Wait for either playback to finish or the recording to complete
             play_waiter = asyncio.create_task(play_finished_event.wait())
             record_waiter = asyncio.create_task(record_result_queue.get())
             
@@ -199,7 +200,6 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                # The completed recording is the result from the queue
                 return record_waiter.result()
             else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
