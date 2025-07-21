@@ -13,9 +13,10 @@ from groq import Groq
 from dotenv import load_dotenv
 from tts.piper_tts import PiperTTS
 from signalwire.relay.consumer import Consumer
-from signalwire.relay.calling import Call, RecordResult
+from signalwire.relay.calling import Call
 from celery_worker.celery_app import celery_app
 from urllib.parse import quote
+from types import SimpleNamespace
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -168,10 +169,8 @@ class VoiceAIAgent(Consumer):
             play_finished_event.set()
 
         async def on_record_finished(action_dict):
-            # The event returns a dict, so we reconstruct the RecordResult object
-            # This is the definitive fix based on the official SignalWire documentation
-            reconstructed_action = RecordResult.from_dict(action_dict)
-            await record_result_queue.put(reconstructed_action)
+            # The event returns a dict. We put it in the queue.
+            await record_result_queue.put(action_dict)
 
         try:
             call.on('play.finished', on_play_finished)
@@ -199,7 +198,10 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                return record_waiter.result()
+                # The result is a dict. We create a mock object with a .url attribute.
+                # This is the definitive fix for the AttributeError and avoids the ImportError.
+                result_dict = record_waiter.result()
+                return SimpleNamespace(url=result_dict.get('url'))
             else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
                 await record_action.stop()
