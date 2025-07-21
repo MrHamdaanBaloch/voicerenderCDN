@@ -1,3 +1,4 @@
+# Cache-busting comment to force a clean build on Render: 2025-07-21-v1
 import os
 from celery import Celery
 from dotenv import load_dotenv
