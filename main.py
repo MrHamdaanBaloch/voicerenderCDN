@@ -14,6 +14,8 @@ from dotenv import load_dotenv
 from tts.piper_tts import PiperTTS
 from signalwire.relay.consumer import Consumer
 from signalwire.relay.calling import Call
+# This is the correct, verified import path for the recording component
+from signalwire.relay.calling.components import Record
 from celery_worker.celery_app import celery_app
 from urllib.parse import quote
 
@@ -168,10 +170,8 @@ class VoiceAIAgent(Consumer):
             play_finished_event.set()
 
         async def on_record_finished(action_dict):
-            # The event returns a dict, so we reconstruct the RecordAction object
-            # This is the definitive fix for the 'dict' object has no attribute 'url' error
-            from signalwire.relay.calling import RecordAction
-            reconstructed_action = RecordAction.from_dict(action_dict)
+            # The event returns a dict, so we reconstruct the Record component
+            reconstructed_action = Record.from_dict(action_dict)
             await record_result_queue.put(reconstructed_action)
 
         try:
