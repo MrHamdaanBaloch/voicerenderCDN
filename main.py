@@ -162,13 +162,15 @@ class VoiceAIAgent(Consumer):
         logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         
         play_finished_event = asyncio.Event()
-        record_finished_event = asyncio.Event()
+        # Use a queue to safely pass the recording result from the event handler
+        record_result_queue = asyncio.Queue()
 
         async def on_play_finished(action):
             play_finished_event.set()
 
         async def on_record_finished(action):
-            record_finished_event.set()
+            # Put the final, completed action into the queue
+            await record_result_queue.put(action)
 
         try:
             call.on('play.finished', on_play_finished)
@@ -185,8 +187,9 @@ class VoiceAIAgent(Consumer):
 
             record_action = await call.record_async(beep=False, end_silence_timeout=1.0)
 
+            # Wait for either playback to finish or the recording to complete
             play_waiter = asyncio.create_task(play_finished_event.wait())
-            record_waiter = asyncio.create_task(record_finished_event.wait())
+            record_waiter = asyncio.create_task(record_result_queue.get())
             
             done, pending = await asyncio.wait([play_waiter, record_waiter], return_when=asyncio.FIRST_COMPLETED)
 
@@ -196,8 +199,8 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                # CRITICAL FIX: Return the action object itself, which contains the result.
-                return record_action
+                # The completed recording is the result from the queue
+                return record_waiter.result()
             else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
                 await record_action.stop()
