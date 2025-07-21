@@ -235,6 +235,24 @@ async def get_generated_audio_url(text: str, background_tasks: BackgroundTasks):
 def read_root():
     return {"message": "Voice Agent Service is running."}
 
+@app.get("/debug-view-code")
+def debug_view_code():
+    """
+    A temporary endpoint to view the deployed code on Render and verify the version.
+    """
+    try:
+        with open("main.py", "r") as f:
+            main_py_content = f.read()
+        with open("celery_worker/celery_app.py", "r") as f:
+            celery_app_py_content = f.read()
+        return {
+            "message": "Currently deployed code",
+            "main.py": main_py_content,
+            "celery_worker/celery_app.py": celery_app_py_content
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Could not read code files: {e}")
+
 @app.on_event("startup")
 def start_relay_consumer():
     # Verify all necessary environment variables are set before starting
