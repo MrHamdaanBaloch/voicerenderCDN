@@ -135,9 +135,13 @@ class VoiceAIAgent(Consumer):
                     logger.info(f"[{call.id}] Listening for user input...")
                     recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
-                # If we have no recording from either barge-in or normal listening, loop again.
-                if not recording_to_process or not recording_to_process.url:
-                    logger.warning(f"[{call.id}] Recording was empty or failed.")
+                # If we have no recording, or the recording is invalid or too short, discard and loop again.
+                MIN_DURATION_S = 0.4 # 400ms
+                if not recording_to_process or not getattr(recording_to_process, 'url', None) or getattr(recording_to_process, 'duration', 0) < MIN_DURATION_S:
+                    if recording_to_process:
+                        logger.warning(f"[{call.id}] Discarding recording (duration: {getattr(recording_to_process, 'duration', 0)}s) - too short.")
+                    else:
+                        logger.warning(f"[{call.id}] Recording was empty or failed.")
                     recording_to_process = None # Reset for the next loop
                     continue
                 
@@ -198,10 +202,9 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                # The result is a dict. We create a mock object with a .url attribute.
-                # This is the definitive fix for the AttributeError and avoids the ImportError.
+                # The result is a dict. We create a mock object with all necessary attributes.
                 result_dict = record_waiter.result()
-                return SimpleNamespace(url=result_dict.get('url'))
+                return SimpleNamespace(url=result_dict.get('url'), duration=result_dict.get('duration', 0))
             else:
                 logger.info(f"[{call.id}] Playback finished. Stopping listener.")
                 await record_action.stop()
