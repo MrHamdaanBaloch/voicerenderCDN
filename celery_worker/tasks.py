@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import io
 import requests
 from groq import Groq
+from vad.vad_detector import VADDetector
 
 # --- Configuration ---
 load_dotenv()
@@ -18,11 +19,18 @@ try:
         logger.warning("GROQ_API_KEY not set. Celery worker cannot function.")
         groq_client = None
     else:
-        groq_client = Groq(api_key=groq_api_key)
+    groq_client = Groq(api_key=groq_api_key)
         logger.info("Celery Task: Groq client initialized.")
 except Exception as e:
     logger.error(f"Failed to initialize Groq client in Celery worker: {e}", exc_info=True)
     groq_client = None
+
+# --- VAD Initialization ---
+try:
+    vad_detector = VADDetector()
+except Exception as e:
+    logger.error(f"Failed to initialize VAD detector in Celery worker: {e}", exc_info=True)
+    vad_detector = None
 
 @shared_task(name="get_llm_response_task", bind=True, max_retries=3, default_retry_delay=5)
 def get_llm_response_task(self, call_id: str, recording_url: str, conversation_history: list) -> dict | None:
@@ -31,11 +39,11 @@ def get_llm_response_task(self, call_id: str, recording_url: str, conversation_h
     from an LLM with conversation history, and returns both the LLM response
     and the user's transcript.
     """
-    if not groq_client:
-        logger.error(f"[{call_id}] Groq client not available. Retrying task...")
+    if not groq_client or not vad_detector:
+        logger.error(f"[{call_id}] A critical service (Groq or VAD) is not available. Retrying task...")
         raise self.retry()
 
-    logger.info(f"[{call_id}] Celery task started for STT/LLM processing.")
+    logger.info(f"[{call_id}] Celery task started for VAD/STT/LLM processing.")
 
     try:
         # --- Step 1: Download audio ---
@@ -45,15 +53,20 @@ def get_llm_response_task(self, call_id: str, recording_url: str, conversation_h
         # Reduce timeout to 10s to avoid causing a full Celery task timeout.
         response = requests.get(recording_url, auth=auth, timeout=10)
         response.raise_for_status()
+        audio_bytes = response.content
         download_end_time = time.monotonic()
         download_latency = (download_end_time - download_start_time) * 1000
         logger.info(f"[{call_id}] Audio downloaded in {download_latency:.2f} ms.")
         
-        audio_buffer = io.BytesIO(response.content)
-        audio_buffer.name = "recording.wav"
-        
-        # --- Step 2: STT ---
+        # --- Step 2: VAD ---
+        if not vad_detector.is_speech(audio_bytes):
+            logger.info(f"[{call_id}] VAD detected no speech. Discarding task.")
+            return None # Return None if no speech is detected
+
+        # --- Step 3: STT ---
         logger.info(f"[{call_id}] Transcribing audio...")
+        audio_buffer = io.BytesIO(audio_bytes)
+        audio_buffer.name = "recording.wav"
         stt_start_time = time.monotonic()
         transcription = groq_client.audio.transcriptions.create(
             file=(audio_buffer.name, audio_buffer.read()),
@@ -68,7 +81,7 @@ def get_llm_response_task(self, call_id: str, recording_url: str, conversation_h
         if not transcript_text.strip():
             return None # Return None if user said nothing
 
-        # --- Step 3: LLM ---
+        # --- Step 4: LLM ---
         logger.info(f"[{call_id}] Generating chat completion with history...")
         llm_start_time = time.monotonic()
         

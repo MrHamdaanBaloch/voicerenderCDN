@@ -19,6 +19,7 @@ from urllib.parse import quote
 from types import SimpleNamespace
 import redis
 import json
+from vad.vad_detector import VADDetector
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -44,6 +45,7 @@ TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
 groq_client = Groq(api_key=GROQ_API_KEY)
 piper_tts_service = PiperTTS()
 redis_client = redis.from_url(os.environ["REDIS_URL"])
+vad_detector = VADDetector()
 
 # --- Directory Setup ---
 for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
@@ -139,13 +141,10 @@ class VoiceAIAgent(Consumer):
                     logger.info(f"[{call.id}] Listening for user input...")
                     recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
-                # If we have no recording, or the recording is invalid or too short, discard and loop again.
-                MIN_DURATION_S = 0.8 # 800ms - A more robust threshold to filter out noise.
-                if not recording_to_process or not getattr(recording_to_process, 'url', None) or getattr(recording_to_process, 'duration', 0) < MIN_DURATION_S:
-                    if recording_to_process:
-                        logger.warning(f"[{call.id}] Discarding recording (duration: {getattr(recording_to_process, 'duration', 0)}s) - too short.")
-                    else:
-                        logger.warning(f"[{call.id}] Recording was empty or failed.")
+                # If we have no recording or the recording URL is missing, loop again.
+                # The advanced VAD check is now handled by the Celery worker.
+                if not recording_to_process or not getattr(recording_to_process, 'url', None):
+                    logger.warning(f"[{call.id}] Recording was empty or failed.")
                     recording_to_process = None # Reset for the next loop
                     continue
                 
@@ -169,7 +168,7 @@ class VoiceAIAgent(Consumer):
                 recording_to_process = None
 
                 if not llm_response_text:
-                    logger.error(f"[{call.id}] Worker failed to produce LLM text.")
+                    logger.error(f"[{call.id}] Worker failed to produce LLM text (VAD may have detected no speech).")
                     continue
                 
                 # Play the LLM response and listen for the next barge-in.

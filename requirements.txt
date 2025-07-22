@@ -16,3 +16,7 @@ groq
 
 # Utilities
 requests
+
+# VAD (Voice Activity Detection)
+torch
+torchaudio
