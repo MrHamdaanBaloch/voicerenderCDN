@@ -38,7 +38,14 @@ class VADDetector:
             # Use an in-memory buffer to read the audio bytes
             audio_buffer = io.BytesIO(audio_bytes)
             wav = read_audio(audio_buffer, sampling_rate=8000)
-            speech_timestamps = get_speech_timestamps(wav, self._model, sampling_rate=8000)
+            # Lower the speech probability threshold to make the VAD more sensitive.
+            # The default is 0.5, which is too strict for this use case.
+            speech_timestamps = get_speech_timestamps(
+                wav, 
+                self._model, 
+                sampling_rate=8000,
+                speech_prob_threshold=0.35
+            )
             
             if len(speech_timestamps) > 0:
                 logger.info("Speech detected in audio.")
