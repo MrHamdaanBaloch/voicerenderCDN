@@ -19,7 +19,7 @@ try:
         logger.warning("GROQ_API_KEY not set. Celery worker cannot function.")
         groq_client = None
     else:
-    groq_client = Groq(api_key=groq_api_key)
+        groq_client = Groq(api_key=groq_api_key)
         logger.info("Celery Task: Groq client initialized.")
 except Exception as e:
     logger.error(f"Failed to initialize Groq client in Celery worker: {e}", exc_info=True)
