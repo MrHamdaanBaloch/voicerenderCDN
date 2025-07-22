@@ -24,6 +24,12 @@ celery_app.conf.update(
     result_serializer='json',
     timezone='UTC',
     enable_utc=True,
+    # Add broker transport options for connection stability
+    broker_transport_options={
+        'visibility_timeout': 3600,  # 1 hour
+        'broker_connection_retry_on_startup': True,
+        'keepalive': True, # Enable TCP keepalives
+    }
 )
 
 # Idempotently apply SSL settings to the URL for maximum compatibility.

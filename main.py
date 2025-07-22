@@ -152,6 +152,13 @@ class VoiceAIAgent(Consumer):
                 
                 task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url, conversation_history])
                 task_result = task.get(timeout=15)
+
+                # If the task returns None (e.g., VAD detected no speech),
+                # reset the loop to listen for the user again.
+                if task_result is None:
+                    logger.warning(f"[{call.id}] Worker returned no result (likely no speech detected). Looping.")
+                    recording_to_process = None
+                    continue
                 
                 llm_response_text = task_result.get('llm_response')
                 user_transcript = task_result.get('user_transcript')
