@@ -19,7 +19,6 @@ from urllib.parse import quote
 from types import SimpleNamespace
 import redis
 import json
-from vad.vad_detector import VADDetector
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -45,7 +44,6 @@ TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
 groq_client = Groq(api_key=GROQ_API_KEY)
 piper_tts_service = PiperTTS()
 redis_client = redis.from_url(os.environ["REDIS_URL"])
-vad_detector = VADDetector()
 
 # --- Directory Setup ---
 for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
@@ -142,9 +140,9 @@ class VoiceAIAgent(Consumer):
                     recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
                 # If we have no recording or the recording URL is missing, loop again.
-                # The advanced VAD check is now handled by the Celery worker.
+                # The VAD check is now handled entirely by the Celery worker.
                 if not recording_to_process or not getattr(recording_to_process, 'url', None):
-                    logger.warning(f"[{call.id}] Recording was empty or failed.")
+                    logger.warning(f"[{call.id}] Recording was empty or failed, looping to listen again.")
                     recording_to_process = None # Reset for the next loop
                     continue
                 
