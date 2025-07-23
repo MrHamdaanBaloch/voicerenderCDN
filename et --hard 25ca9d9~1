@@ -1,0 +1,10 @@
+[33m969e828[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m)[m Final Cleanup: Remove large model files from working directory
+[33m8182703[m CI: Update build script and gitignore for Vosk
+[33m523282d[m Final Fix: Integrate Vosk and ignore model files
+[33ma4e613a[m Upgrade: Integrate Vosk 8kHz model for superior STT and noise handling
+[33m25ca9d9[m Feat: Replace VAD and Groq STT with superior Vosk implementation
+[33mf96d76c[m Final Fix: Tune VAD sensitivity to correctly detect user speech
+[33m41ff8ef[m Fix: Add None check for Celery results and enable Redis keepalives
+[33mf248609[m Fix: Offload VAD to Celery worker to resolve memory issues on Render
+[33m81bfd0a[m Final Build: Correct syntax and finalize VAD integration
+[33m0ac0b35[m Final Feature: Integrate Silero VAD into Celery worker

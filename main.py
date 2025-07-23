@@ -30,14 +30,13 @@ app = FastAPI()
 
 # --- Global Configuration ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+MIN_RECORDING_DURATION_S = float(os.environ.get("MIN_RECORDING_DURATION_S", 0.8))
 TELEPHONY_CODEC = os.environ.get("TELEPHONY_CODEC", "pcm_mulaw")
 OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_CONTEXT = os.environ.get("SIGNALWIRE_CONTEXT", "voiceai")
-# The TTS_ORCHESTRATOR_URL is now the service's own public URL,
-# which we will get from the Render environment at runtime.
 TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 # --- Service Clients ---
@@ -53,7 +52,7 @@ for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
 
 app.mount("/audio", StaticFiles(directory=OPTIMIZED_AUDIO_DIR), name="audio")
 
-# --- TTS Generation Logic (from tts_orchestrator.py) ---
+# --- TTS Generation Logic ---
 def cleanup_file(path: str):
     try:
         if os.path.exists(path): os.remove(path)
@@ -109,7 +108,7 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
         
     return optimized_filename
 
-# --- SignalWire Relay Logic (from relay_server.py) ---
+# --- SignalWire Relay Logic ---
 class VoiceAIAgent(Consumer):
     def setup(self):
         self.project = SIGNALWIRE_PROJECT_ID
@@ -128,55 +127,52 @@ class VoiceAIAgent(Consumer):
         logger.info(f"[{call.id}] Starting conversation.")
         redis_key = f"conversation:{call.id}"
         try:
-            # The play_tts_response function now returns a recording if a barge-in occurs.
             barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
             
             recording_to_process = barge_in_recording
 
             while call.active:
-                # If there was no barge-in on the last playback, we need to listen for the user's speech now.
                 if not recording_to_process:
                     logger.info(f"[{call.id}] Listening for user input...")
                     recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
-                # If we have no recording or the recording URL is missing, loop again.
-                # The VAD check is now handled entirely by the Celery worker.
                 if not recording_to_process or not getattr(recording_to_process, 'url', None):
                     logger.warning(f"[{call.id}] Recording was empty or failed, looping to listen again.")
-                    recording_to_process = None # Reset for the next loop
+                    recording_to_process = None
+                    continue
+
+                # VAD: Discard recordings that are too short (likely noise)
+                recording_duration = getattr(recording_to_process, 'duration', 0)
+                if recording_duration < MIN_RECORDING_DURATION_S:
+                    logger.warning(f"[{call.id}] Discarding recording of {recording_duration:.2f}s (less than {MIN_RECORDING_DURATION_S}s), likely noise.")
+                    recording_to_process = None
                     continue
                 
-                # We have a recording, retrieve history and send to Celery.
                 history_json = redis_client.get(redis_key)
                 conversation_history = json.loads(history_json) if history_json else []
                 
                 task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url, conversation_history])
                 task_result = task.get(timeout=15)
 
-                # If the task returns None (e.g., VAD detected no speech),
-                # reset the loop to listen for the user again.
                 if task_result is None:
-                    logger.warning(f"[{call.id}] Worker returned no result (likely no speech detected). Looping.")
+                    logger.warning(f"[{call.id}] Worker returned no result (Vosk detected no speech). Looping.")
                     recording_to_process = None
                     continue
                 
                 llm_response_text = task_result.get('llm_response')
                 user_transcript = task_result.get('user_transcript')
 
-                # Update conversation history in Redis
                 if user_transcript:
                     conversation_history.append({"role": "user", "content": user_transcript})
                     conversation_history.append({"role": "assistant", "content": llm_response_text})
-                    redis_client.set(redis_key, json.dumps(conversation_history), ex=3600) # 1-hour expiry
+                    redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
-                # Reset for the next loop.
                 recording_to_process = None
 
                 if not llm_response_text:
-                    logger.error(f"[{call.id}] Worker failed to produce LLM text (VAD may have detected no speech).")
+                    logger.error(f"[{call.id}] Worker failed to produce LLM text.")
                     continue
                 
-                # Play the LLM response and listen for the next barge-in.
                 recording_to_process = await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
         except Exception as e:
             logger.error(f"[{call.id}] Unhandled exception in conversation: {e}", exc_info=True)
@@ -193,7 +189,6 @@ class VoiceAIAgent(Consumer):
             play_finished_event.set()
 
         async def on_record_finished(action_dict):
-            # The event returns a dict. We put it in the queue.
             await record_result_queue.put(action_dict)
 
         try:
@@ -209,7 +204,6 @@ class VoiceAIAgent(Consumer):
             else:
                 play_action = await call.play_tts_async(text=text)
 
-            # Use a shorter silence timeout for barge-in to be more responsive.
             record_action = await call.record_async(beep=False, end_silence_timeout=0.7)
 
             play_waiter = asyncio.create_task(play_finished_event.wait())
@@ -223,7 +217,6 @@ class VoiceAIAgent(Consumer):
             if record_waiter in done:
                 logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                 await play_action.stop()
-                # The result is a dict. We create a mock object with all necessary attributes.
                 result_dict = record_waiter.result()
                 return SimpleNamespace(url=result_dict.get('url'), duration=result_dict.get('duration', 0))
             else:
@@ -253,21 +246,16 @@ def read_root():
 
 @app.on_event("startup")
 def start_relay_consumer():
-    # Verify all necessary environment variables are set before starting
     if not all([SIGNALWIRE_PROJECT_ID, SIGNALWIRE_API_TOKEN, TTS_ORCHESTRATOR_URL]):
         logger.critical("FATAL: Missing critical SignalWire or Render environment variables. The Relay Consumer will not start.")
         return
         
     def run_agent():
-        # Create a new event loop for the new thread
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-
         agent = VoiceAIAgent()
-        # The run() method is blocking, so it will run forever in this loop.
         agent.run()
 
-    # Run the SignalWire consumer in a separate thread
     thread = threading.Thread(target=run_agent, daemon=True)
     thread.start()
     logger.info("SignalWire Relay Consumer started in a background thread.")

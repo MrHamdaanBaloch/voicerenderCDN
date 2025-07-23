@@ -11,12 +11,11 @@ signalwire
 celery
 redis
 
-# AI Services - Groq for STT and LLM
+# AI Services - Groq for LLM
 groq
 
 # Utilities
 requests
 
-# VAD (Voice Activity Detection)
-torch
-torchaudio
+# Local, CPU-based STT with integrated VAD
+vosk

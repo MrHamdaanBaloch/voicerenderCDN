@@ -29,3 +29,7 @@ temp_raw_audio/
 
 # Ignore problematic submodule folder
 WORKING SIGNALRELAY/
+
+# Vosk models and downloaded archives
+vosk-model-*
+*.zip
