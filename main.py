@@ -234,6 +234,6 @@ async def startup_event():
         logger.critical("FATAL: Missing critical SignalWire or Render environment variables. The Relay Client will not start.")
         return
     
-    sw_client.calling.on('call.received', on_incoming_call)
+    sw_client.on('call.received', on_incoming_call)
     await sw_client.connect()
     logger.info("SignalWire Relay Client connected and listening for calls.")
