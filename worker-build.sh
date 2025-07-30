@@ -3,7 +3,7 @@
 set -o errexit
 
 # Define the model name and zip file
-MODEL_NAME="vosk-model-small-en-us-0.15"
+MODEL_NAME="vosk-model-small-en-us-0.15-8k"
 MODEL_ZIP="${MODEL_NAME}.zip"
 MODEL_URL="https://alphacephei.com/vosk/models/${MODEL_ZIP}"
 

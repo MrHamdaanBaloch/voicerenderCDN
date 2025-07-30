@@ -120,6 +120,8 @@ class VoiceAIAgent(Consumer):
     async def on_incoming_call(self, call: Call):
         logger.info(f"📞 Incoming call {call.id} from {call.from_number}.")
         await call.answer()
+        # Set a high-quality audio codec for the call
+        await call.set_audio_codec('opus')
         asyncio.create_task(self.handle_conversation(call))
 
     async def handle_conversation(self, call: Call):

@@ -28,7 +28,7 @@ except Exception as e:
     groq_client = None
 
 # --- Vosk Model Initialization ---
-VOSK_MODEL_PATH = os.environ.get("VOSK_MODEL_PATH", "vosk-model-small-en-us-0.15")
+VOSK_MODEL_PATH = os.environ.get("VOSK_MODEL_PATH", "vosk-model-small-en-us-0.15-8k")
 try:
     if not os.path.exists(VOSK_MODEL_PATH):
         logger.error(f"Vosk model not found at '{VOSK_MODEL_PATH}'. Please download and place it correctly. STT will fail.")
