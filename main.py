@@ -119,16 +119,16 @@ class VoiceAIAgent(Consumer):
 
     async def on_incoming_call(self, call: Call):
         logger.info(f"📞 Incoming call {call.id} from {call.from_number}.")
+        # Answer the call per the official documentation
         await call.answer()
-        # Set a high-quality audio codec for the call
-        await call.set_audio_codec('opus')
         asyncio.create_task(self.handle_conversation(call))
 
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
         redis_key = f"conversation:{call.id}"
         try:
-            barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=False)
+            # Use the high-quality Groq pipeline for the initial welcome message.
+            barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=True)
             
             recording_to_process = barge_in_recording
 
