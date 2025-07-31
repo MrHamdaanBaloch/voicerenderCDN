@@ -30,6 +30,7 @@ app = FastAPI()
 
 # --- Global Configuration ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
+MIN_RECORDING_DURATION_S = float(os.environ.get("MIN_RECORDING_DURATION_S", 0.8))
 TELEPHONY_CODEC = os.environ.get("TELEPHONY_CODEC", "pcm_mulaw")
 OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
@@ -141,6 +142,13 @@ class VoiceAIAgent(Consumer):
                     logger.warning(f"[{call.id}] Recording was empty or failed, looping to listen again.")
                     recording_to_process = None
                     continue
+
+                # VAD: Discard recordings that are too short (likely noise)
+                recording_duration = getattr(recording_to_process, 'duration', 0)
+                if recording_duration < MIN_RECORDING_DURATION_S:
+                    logger.warning(f"[{call.id}] Discarding recording of {recording_duration:.2f}s (less than {MIN_RECORDING_DURATION_S}s), likely noise.")
+                    recording_to_process = None
+                    continue
                 
                 history_json = redis_client.get(redis_key)
                 conversation_history = json.loads(history_json) if history_json else []
@@ -198,25 +206,41 @@ class VoiceAIAgent(Consumer):
             else:
                 play_action = await call.play_tts_async(text=text)
 
-            record_action = await call.record_async(beep=False, end_silence_timeout=0.7)
+            # This loop handles barge-in attempts. It will only exit if the AI finishes
+            # speaking or a VALID (non-noise) barge-in is detected.
+            while True:
+                record_action = await call.record_async(beep=False, end_silence_timeout=0.7)
 
-            play_waiter = asyncio.create_task(play_finished_event.wait())
-            record_waiter = asyncio.create_task(record_result_queue.get())
-            
-            done, pending = await asyncio.wait([play_waiter, record_waiter], return_when=asyncio.FIRST_COMPLETED)
+                play_waiter = asyncio.create_task(play_finished_event.wait())
+                record_waiter = asyncio.create_task(record_result_queue.get())
+                
+                done, pending = await asyncio.wait([play_waiter, record_waiter], return_when=asyncio.FIRST_COMPLETED)
 
-            for task in pending:
-                task.cancel()
+                # Cancel the task that didn't complete to avoid lingering tasks.
+                for task in pending:
+                    task.cancel()
 
-            if record_waiter in done:
-                logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
-                await play_action.stop()
-                result_dict = record_waiter.result()
-                return SimpleNamespace(url=result_dict.get('url'), duration=result_dict.get('duration', 0))
-            else:
-                logger.info(f"[{call.id}] Playback finished. Stopping listener.")
-                await record_action.stop()
-                return None
+                if play_waiter in done:
+                    # Playback finished naturally without a valid interruption.
+                    logger.info(f"[{call.id}] Playback finished. Stopping listener.")
+                    await record_action.stop()
+                    return None
+
+                if record_waiter in done:
+                    result_dict = record_waiter.result()
+                    duration = result_dict.get('duration', 0)
+
+                    # This is the INTELLIGENCE LAYER.
+                    # Only treat recordings above the minimum duration as a real barge-in.
+                    if duration >= MIN_RECORDING_DURATION_S:
+                        logger.info(f"[{call.id}] Genuine barge-in detected (duration: {duration:.2f}s). Stopping playback.")
+                        await play_action.stop()
+                        return SimpleNamespace(url=result_dict.get('url'), duration=duration)
+                    else:
+                        # This was just noise. Ignore it and let the AI continue talking.
+                        logger.warning(f"[{call.id}] Noise detected (duration: {duration:.2f}s). Ignoring and continuing playback.")
+                        # The loop will now restart, creating a new listener.
+                        continue
 
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)

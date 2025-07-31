@@ -124,6 +124,9 @@ def get_llm_response_task(self, call_id: str, recording_url: str, conversation_h
             "user_transcript": transcript_text
         }
 
+    except wave.Error as e:
+        logger.warning(f"[{call_id}] Could not process audio file. It is likely corrupted or empty. Error: {e}")
+        return None
     except Exception as e:
         logger.error(f"[{call_id}] Unhandled exception in Celery STT/LLM task: {e}", exc_info=True)
         return None
