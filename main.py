@@ -146,11 +146,12 @@ class VoiceAIAgent(Consumer):
             recording_to_process = barge_in_recording
 
             while call.active:
-                if not recording_to_process:
-                    logger.info(f"[{call.id}] Listening for user input...")
-                    recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
+                try:
+                    if not recording_to_process:
+                        logger.info(f"[{call.id}] Listening for user input...")
+                        recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
 
-                if not recording_to_process or not getattr(recording_to_process, 'url', None):
+                    if not recording_to_process or not getattr(recording_to_process, 'url', None):
                     logger.warning(f"[{call.id}] Recording was empty or failed, looping to listen again.")
                     recording_to_process = None
                     continue
@@ -162,19 +163,12 @@ class VoiceAIAgent(Consumer):
                     recording_to_process = None
                     continue
                 
-                # --- Pre-emptive "Thinking" Audio & Conversational Fillers ---
-                # Play a random, short thinking sound immediately to reduce perceived latency.
+                # --- Pre-emptive "Thinking" Audio ---
+                # Play a random, short thinking sound to reduce perceived latency while the task runs.
                 thinking_sound = random.choice(THINKING_SOUNDS)
                 thinking_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"
                 asyncio.create_task(call.play_audio(url=thinking_audio_url))
                 
-                # For longer queries, play a conversational filler.
-                if recording_duration > 4.0: # If user spoke for more than 4 seconds
-                    filler_text = random.choice(CONVERSATIONAL_FILLERS)
-                    logger.info(f"[{call.id}] Playing conversational filler: '{filler_text}'")
-                    # We don't await this, let it play while we process.
-                    asyncio.create_task(self.play_tts_response(call, filler_text, use_groq_pipeline=True))
-
                 history_json = redis_client.get(redis_key)
                 conversation_history = json.loads(history_json) if history_json else []
                 
@@ -200,9 +194,19 @@ class VoiceAIAgent(Consumer):
                     logger.error(f"[{call.id}] Worker failed to produce LLM text.")
                     continue
                 
-                recording_to_process = await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
-        except Exception as e:
-            logger.error(f"[{call.id}] Unhandled exception in conversation: {e}", exc_info=True)
+                    recording_to_process = await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
+                except Exception as e:
+                    # This will catch errors if the call hangs up unexpectedly during an operation.
+                    if not call.active:
+                        logger.info(f"[{call.id}] Call has ended, exiting conversation loop.")
+                        break
+                    else:
+                        # If the call is still active, it's a different error.
+                        logger.error(f"[{call.id}] An unexpected error occurred in the conversation loop: {e}", exc_info=True)
+                        # We can try to recover by playing an error message.
+                        await self.play_tts_response(call, "I'm sorry, a system error occurred. Let's try that again.", use_groq_pipeline=True)
+                        recording_to_process = None # Reset to allow listening again.
+                        continue
         finally:
             logger.info(f"[{call.id}] Conversation ended.")
 
