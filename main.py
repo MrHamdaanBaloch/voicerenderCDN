@@ -13,6 +13,7 @@ from groq import Groq
 from dotenv import load_dotenv
 from tts.piper_tts import PiperTTS
 from signalwire.relay.consumer import Consumer
+from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from signalwire.relay.calling import Call
 from celery_worker.celery_app import celery_app
 from urllib.parse import quote
@@ -39,6 +40,7 @@ SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_CONTEXT = os.environ.get("SIGNALWIRE_CONTEXT", "voiceai")
 TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
+DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 
 THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
 
@@ -54,6 +56,36 @@ CONVERSATIONAL_FILLERS = [
 groq_client = Groq(api_key=GROQ_API_KEY)
 piper_tts_service = PiperTTS()
 redis_client = redis.from_url(os.environ["REDIS_URL"])
+deepgram_client = DeepgramClient(DEEPGRAM_API_KEY)
+
+class DeepgramTranscriber:
+    def __init__(self):
+        self.connection = None
+        self.full_transcript = []
+
+    def connect(self):
+        self.connection = deepgram_client.listen.asynclive.v("1")
+        self.connection.on(LiveTranscriptionEvents.Transcript, self._on_transcript)
+        options = LiveOptions(
+            model="phonecall",
+            language="en-US",
+            encoding="mulaw",
+            sample_rate=8000,
+            smart_format=True,
+            endpointing=300, # VAD: 300ms of silence
+        )
+        return self.connection, options
+
+    async def _on_transcript(self, *args, **kwargs):
+        transcript = kwargs.get("channel", {}).get("alternatives", [{}])[0].get("transcript", "")
+        if kwargs.get("is_final", False) and transcript:
+            self.full_transcript.append(transcript.strip())
+
+    def get_full_transcript(self):
+        return " ".join(self.full_transcript)
+
+    def reset(self):
+        self.full_transcript = []
 
 # --- Directory Setup ---
 for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
@@ -125,46 +157,64 @@ class VoiceAIAgent(Consumer):
         self.project = SIGNALWIRE_PROJECT_ID
         self.token = SIGNALWIRE_API_TOKEN
         self.contexts = [SIGNALWIRE_CONTEXT]
+        self.transcriber = DeepgramTranscriber()
+        self.transcript_queue = asyncio.Queue()
     
     async def ready(self):
         logger.info(f"✅ SignalWire Consumer ready on context '{SIGNALWIRE_CONTEXT}'")
 
     async def on_incoming_call(self, call: Call):
         logger.info(f"📞 Incoming call {call.id} from {call.from_number}.")
-        # Answer the call per the official documentation
         await call.answer()
+        ai_device = await call.connect(ai=True)
+        
+        deepgram_connection, options = self.transcriber.connect()
+        
+        await ai_device.send({
+            "provider": "deepgram",
+            "channel": {
+                "url": f"wss://api.deepgram.com/v1/listen?{options.to_querystring()}",
+                "headers": {
+                    "Authorization": f"Token {DEEPGRAM_API_KEY}"
+                }
+            }
+        })
+
+        ai_device.on('message', lambda msg: self.on_call_ai_message(call, msg))
         asyncio.create_task(self.handle_conversation(call))
+
+    async def on_call_ai_message(self, call, message):
+        if message['type'] == 'transcript':
+            transcript = message.get('channel', {}).get('alternatives', [{}])[0].get('transcript', '')
+            if transcript and message.get('is_final'):
+                self.transcriber.full_transcript.append(transcript)
+                
+                # If this is the end of an utterance, process it.
+                if message.get('speech_final'):
+                    full_sentence = self.transcriber.get_full_transcript()
+                    if full_sentence:
+                        logger.info(f"[{call.id}] Final Transcript: {full_sentence}")
+                        await self.transcript_queue.put(full_sentence)
+                        self.transcriber.reset()
+
 
     async def handle_conversation(self, call: Call):
         logger.info(f"[{call.id}] Starting conversation.")
         redis_key = f"conversation:{call.id}"
-        try:
-            # Play the pre-recorded welcome message.
-            welcome_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav"
-            barge_in_recording = await self.play_tts_response(call, welcome_audio_url, use_groq_pipeline=True) # Still use pipeline for barge-in
-            
-            recording_to_process = barge_in_recording
+        
+        # Play the pre-recorded welcome message.
+        welcome_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav"
+        await self.play_tts_response(call, welcome_audio_url, use_groq_pipeline=True)
 
-            while call.active:
-                try:
-                    if not recording_to_process:
-                        logger.info(f"[{call.id}] Listening for user input...")
-                        recording_to_process = await call.record(beep=False, end_silence_timeout=0.8, record_format='wav')
+        while call.active:
+            try:
+                logger.info(f"[{call.id}] Listening for user input...")
+                user_transcript = await self.transcript_queue.get()
 
-                    if not recording_to_process or not getattr(recording_to_process, 'url', None):
-                    logger.warning(f"[{call.id}] Recording was empty or failed, looping to listen again.")
-                    recording_to_process = None
+                if not user_transcript:
                     continue
 
-                # VAD: Discard recordings that are too short (likely noise)
-                recording_duration = getattr(recording_to_process, 'duration', 0)
-                if recording_duration < MIN_RECORDING_DURATION_S:
-                    logger.warning(f"[{call.id}] Discarding recording of {recording_duration:.2f}s (less than {MIN_RECORDING_DURATION_S}s), likely noise.")
-                    recording_to_process = None
-                    continue
-                
                 # --- Pre-emptive "Thinking" Audio ---
-                # Play a random, short thinking sound to reduce perceived latency while the task runs.
                 thinking_sound = random.choice(THINKING_SOUNDS)
                 thinking_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"
                 asyncio.create_task(call.play_audio(url=thinking_audio_url))
@@ -172,43 +222,40 @@ class VoiceAIAgent(Consumer):
                 history_json = redis_client.get(redis_key)
                 conversation_history = json.loads(history_json) if history_json else []
                 
-                task = celery_app.send_task("get_llm_response_task", args=[call.id, recording_to_process.url, conversation_history])
-                task_result = task.get(timeout=15)
+                # --- LLM ---
+                messages = [
+                    {"role": "system", "content": "You are a human-like voice assistant. Your responses MUST be short, warm, and conversational. NEVER exceed 35 words. Be helpful, but get straight to the point."}
+                ]
+                messages.extend(conversation_history)
+                messages.append({"role": "user", "content": user_transcript})
 
-                if task_result is None:
-                    logger.warning(f"[{call.id}] Worker returned no result (Vosk detected no speech). Looping.")
-                    recording_to_process = None
-                    continue
-                
-                llm_response_text = task_result.get('llm_response')
-                user_transcript = task_result.get('user_transcript')
+                chat_completion = groq_client.chat.completions.create(
+                    messages=messages,
+                    model="llama3-8b-8192",
+                )
+                llm_response_text = chat_completion.choices[0].message.content
+                logger.info(f"[{call.id}] LLM Response: '{llm_response_text}'")
 
                 if user_transcript:
                     conversation_history.append({"role": "user", "content": user_transcript})
                     conversation_history.append({"role": "assistant", "content": llm_response_text})
                     redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
-                recording_to_process = None
-
                 if not llm_response_text:
-                    logger.error(f"[{call.id}] Worker failed to produce LLM text.")
+                    logger.error(f"[{call.id}] LLM failed to produce text.")
                     continue
                 
-                    recording_to_process = await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
-                except Exception as e:
-                    # This will catch errors if the call hangs up unexpectedly during an operation.
-                    if not call.active:
-                        logger.info(f"[{call.id}] Call has ended, exiting conversation loop.")
-                        break
-                    else:
-                        # If the call is still active, it's a different error.
-                        logger.error(f"[{call.id}] An unexpected error occurred in the conversation loop: {e}", exc_info=True)
-                        # We can try to recover by playing an error message.
-                        await self.play_tts_response(call, "I'm sorry, a system error occurred. Let's try that again.", use_groq_pipeline=True)
-                        recording_to_process = None # Reset to allow listening again.
-                        continue
-        finally:
-            logger.info(f"[{call.id}] Conversation ended.")
+                await self.play_tts_response(call, llm_response_text, use_groq_pipeline=True)
+            except Exception as e:
+                if not call.active:
+                    logger.info(f"[{call.id}] Call has ended, exiting conversation loop.")
+                    break
+                else:
+                    logger.error(f"[{call.id}] An unexpected error occurred: {e}", exc_info=True)
+                    await self.play_tts_response(call, "I'm sorry, a system error occurred.", use_groq_pipeline=True)
+                    continue
+        
+        logger.info(f"[{call.id}] Conversation ended.")
 
     async def play_tts_response(self, call: Call, text_or_url: str, use_groq_pipeline: bool = True):
         logger.info(f"[{call.id}] Playing audio for: '{text_or_url[:50]}...'. Using Groq Pipeline: {use_groq_pipeline}")

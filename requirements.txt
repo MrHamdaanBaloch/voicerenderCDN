@@ -13,6 +13,7 @@ redis
 
 # AI Services - Groq for LLM
 groq
+deepgram-sdk
 
 # Utilities
 requests
