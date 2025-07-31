@@ -19,6 +19,7 @@ from urllib.parse import quote
 from types import SimpleNamespace
 import redis
 import json
+import random
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -38,6 +39,16 @@ SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_CONTEXT = os.environ.get("SIGNALWIRE_CONTEXT", "voiceai")
 TTS_ORCHESTRATOR_URL = os.environ.get("RENDER_EXTERNAL_URL")
+
+THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
+
+CONVERSATIONAL_FILLERS = [
+    "One moment.",
+    "Let me check on that for you.",
+    "Okay, just a second.",
+    "Good question. Let me see.",
+    "Thinking..."
+]
 
 # --- Service Clients ---
 groq_client = Groq(api_key=GROQ_API_KEY)
@@ -128,8 +139,9 @@ class VoiceAIAgent(Consumer):
         logger.info(f"[{call.id}] Starting conversation.")
         redis_key = f"conversation:{call.id}"
         try:
-            # Use the high-quality Groq pipeline for the initial welcome message.
-            barge_in_recording = await self.play_tts_response(call, "Hello! Thank you for calling. How can I help you today?", use_groq_pipeline=True)
+            # Play the pre-recorded welcome message.
+            welcome_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav"
+            barge_in_recording = await self.play_tts_response(call, welcome_audio_url, use_groq_pipeline=True) # Still use pipeline for barge-in
             
             recording_to_process = barge_in_recording
 
@@ -150,6 +162,19 @@ class VoiceAIAgent(Consumer):
                     recording_to_process = None
                     continue
                 
+                # --- Pre-emptive "Thinking" Audio & Conversational Fillers ---
+                # Play a random, short thinking sound immediately to reduce perceived latency.
+                thinking_sound = random.choice(THINKING_SOUNDS)
+                thinking_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"
+                asyncio.create_task(call.play_audio(url=thinking_audio_url))
+                
+                # For longer queries, play a conversational filler.
+                if recording_duration > 4.0: # If user spoke for more than 4 seconds
+                    filler_text = random.choice(CONVERSATIONAL_FILLERS)
+                    logger.info(f"[{call.id}] Playing conversational filler: '{filler_text}'")
+                    # We don't await this, let it play while we process.
+                    asyncio.create_task(self.play_tts_response(call, filler_text, use_groq_pipeline=True))
+
                 history_json = redis_client.get(redis_key)
                 conversation_history = json.loads(history_json) if history_json else []
                 
@@ -181,8 +206,8 @@ class VoiceAIAgent(Consumer):
         finally:
             logger.info(f"[{call.id}] Conversation ended.")
 
-    async def play_tts_response(self, call: Call, text: str, use_groq_pipeline: bool = True):
-        logger.info(f"[{call.id}] Playing TTS for: '{text[:30]}...'. Using Groq Pipeline: {use_groq_pipeline}")
+    async def play_tts_response(self, call: Call, text_or_url: str, use_groq_pipeline: bool = True):
+        logger.info(f"[{call.id}] Playing audio for: '{text_or_url[:50]}...'. Using Groq Pipeline: {use_groq_pipeline}")
         
         play_finished_event = asyncio.Event()
         record_result_queue = asyncio.Queue()
@@ -199,12 +224,16 @@ class VoiceAIAgent(Consumer):
             call.on('record.finished', on_record_finished)
 
             if use_groq_pipeline:
-                background_tasks = BackgroundTasks()
-                filename = await generate_tts_audio(text, background_tasks)
-                final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
+                # If it's a URL, play it directly. If it's text, generate TTS.
+                if text_or_url.startswith("http"):
+                    final_audio_url = text_or_url
+                else:
+                    background_tasks = BackgroundTasks()
+                    filename = await generate_tts_audio(text_or_url, background_tasks)
+                    final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
                 play_action = await call.play_audio_async(url=final_audio_url)
             else:
-                play_action = await call.play_tts_async(text=text)
+                play_action = await call.play_tts_async(text=text_or_url)
 
             # This loop handles barge-in attempts. It will only exit if the AI finishes
             # speaking or a VALID (non-noise) barge-in is detected.
