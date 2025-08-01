@@ -7,8 +7,7 @@ aiohttp
 # SignalWire - The only package needed for Relay
 signalwire
 
-# Celery and Redis for background tasks
-celery
+# Redis for conversation history
 redis
 
 # AI Services - Groq for LLM
@@ -19,4 +18,4 @@ deepgram-sdk
 requests
 
 # Local, CPU-based STT with integrated VAD
-vosk
+# vosk # No longer needed, replaced by Deepgram
