@@ -11,7 +11,6 @@ from groq import Groq
 from dotenv import load_dotenv
 from signalwire.relay.consumer import Consumer
 from signalwire.relay.calling import Call, ListenAIParams
-from urllib.parse import quote
 import redis
 import json
 import random
@@ -99,86 +98,100 @@ class VoiceAIAgent(Consumer):
 
     async def on_incoming_call(self, call: Call):
         logger.info(f"📞 Incoming call {call.id} from {call.from_number}.")
-        self.active_calls[call.id] = {
-            "transcript_queue": asyncio.Queue(),
-            "play_action": None
-        }
+        self.active_calls[call.id] = {"play_action": None, "is_playing": False}
         await call.answer()
         
         try:
-            deepgram_options = {
-                "model": "phonecall", "language": "en-US", "encoding": "mulaw",
-                "sample_rate": 8000, "smart_format": True, "endpointing": 300
-            }
-            deepgram_url = f"wss://api.deepgram.com/v1/listen?{quote('&'.join([f'{k}={v}' for k, v in deepgram_options.items()]))}"
-
-            ai_listener = await call.ai.listen(ListenAIParams(
-                direction="both",
-                post_url=deepgram_url,
-                post_url_headers={"Authorization": f"Token {DEEPGRAM_API_KEY}"}
-            ))
-            ai_listener.on('message', lambda msg: self.on_ai_message(call, msg))
+            listen_params = ListenAIParams(
+                ai_engine='deepgram',
+                deepgram={
+                    'model': 'nova-2-phonecall',
+                    'language': 'en-US',
+                    'encoding': 'mulaw',
+                    'sample_rate': 8000,
+                    'smart_format': True,
+                    'endpointing': 300,
+                    'interim_results': False,
+                }
+            )
             
-            asyncio.create_task(self.handle_conversation(call))
+            ai_listener = await call.ai.listen(listen_params)
+            ai_listener.on('message', lambda msg: self.on_ai_message(call, msg))
+
+            # Start the conversation with a welcome message
+            asyncio.create_task(self.play_tts_with_barge_in(call, f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav"))
+
         except Exception as e:
             logger.error(f"[{call.id}] Error setting up AI listener: {e}", exc_info=True)
             await call.hangup()
+        finally:
+            if call.id in self.active_calls and call.active:
+                logger.info(f"[{call.id}] Call ended. Cleaning up.")
+                del self.active_calls[call.id]
 
-    async def on_ai_message(self, call, message):
-        if message.get('transcript') and message.get('is_final') and message.get('speech_final'):
-            full_transcript = message['transcript'].strip()
-            if full_transcript:
-                logger.info(f"[{call.id}] Final Transcript: {full_transcript}")
-                
-                # This is the elegant barge-in. If we are playing audio, stop it.
-                if self.active_calls[call.id]["play_action"]:
+    async def on_ai_message(self, call: Call, message):
+        """Handles incoming transcription messages from the AI listener."""
+        try:
+            if not call.active or call.id not in self.active_calls:
+                return
+
+            transcript = message.result.text
+            if transcript and message.result.final:
+                logger.info(f"[{call.id}] Final Transcript: '{transcript}'")
+
+                # Elegant barge-in: if we are playing audio, stop it immediately.
+                if self.active_calls[call.id].get("is_playing"):
                     logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                     await self.active_calls[call.id]["play_action"].stop()
+                
+                # Process the user's input in a separate, non-blocking task
+                asyncio.create_task(self.process_user_input(call, transcript))
+        except Exception as e:
+            logger.error(f"[{call.id}] Error in on_ai_message: {e}", exc_info=True)
 
-                await self.active_calls[call.id]["transcript_queue"].put(full_transcript)
-
-    async def handle_conversation(self, call: Call):
-        logger.info(f"[{call.id}] Starting conversation.")
+    async def process_user_input(self, call: Call, user_transcript: str):
+        """Takes user transcript, gets LLM response, and plays it back."""
+        if not call.active or not user_transcript:
+            return
+            
         redis_key = f"conversation:{call.id}"
-        
-        await self.play_tts_response(call, f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav")
+        try:
+            # Play a subtle thinking sound to acknowledge input
+            thinking_sound = random.choice(THINKING_SOUNDS)
+            asyncio.create_task(call.play_audio(url=f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"))
 
-        while call.active:
-            try:
-                logger.info(f"[{call.id}] Listening for user input...")
-                user_transcript = await self.active_calls[call.id]["transcript_queue"].get()
+            # Retrieve conversation history
+            history_json = redis_client.get(redis_key)
+            conversation_history = json.loads(history_json) if history_json else []
+            
+            # Construct messages for the LLM
+            messages = [{"role": "system", "content": "You are a helpful and concise voice assistant. Your responses should be friendly and clear."}]
+            messages.extend(conversation_history)
+            messages.append({"role": "user", "content": user_transcript})
 
-                if not user_transcript: continue
+            # Get response from Groq
+            chat_completion = groq_client.chat.completions.create(messages=messages, model="llama3-8b-8192")
+            llm_response_text = chat_completion.choices[0].message.content
+            logger.info(f"[{call.id}] LLM Response: '{llm_response_text}'")
 
-                thinking_sound = random.choice(THINKING_SOUNDS)
-                asyncio.create_task(call.play_audio(url=f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"))
-                
-                history_json = redis_client.get(redis_key)
-                conversation_history = json.loads(history_json) if history_json else []
-                
-                messages = [{"role": "system", "content": "You are a human-like voice assistant..."}]
-                messages.extend(conversation_history)
-                messages.append({"role": "user", "content": user_transcript})
+            # Update conversation history
+            conversation_history.append({"role": "assistant", "content": llm_response_text})
+            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
-                chat_completion = groq_client.chat.completions.create(messages=messages, model="llama3-8b-8192")
-                llm_response_text = chat_completion.choices[0].message.content
-                logger.info(f"[{call.id}] LLM Response: '{llm_response_text}'")
+            # Play the response
+            if llm_response_text:
+                await self.play_tts_with_barge_in(call, llm_response_text)
 
-                conversation_history.append({"role": "assistant", "content": llm_response_text})
-                redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
+        except Exception as e:
+            logger.error(f"[{call.id}] Error in process_user_input: {e}", exc_info=True)
+            if call.active:
+                await self.play_tts_with_barge_in(call, "I'm sorry, a system error occurred.")
 
-                if llm_response_text:
-                    await self.play_tts_response(call, llm_response_text)
+    async def play_tts_with_barge_in(self, call: Call, text_or_url: str):
+        """Plays TTS audio and manages state for barge-in."""
+        if not call.active or call.id not in self.active_calls:
+            return
 
-            except Exception as e:
-                if not call.active: break
-                logger.error(f"[{call.id}] Error in conversation loop: {e}", exc_info=True)
-                await self.play_tts_response(call, "I'm sorry, a system error occurred.")
-        
-        logger.info(f"[{call.id}] Conversation ended.")
-        del self.active_calls[call.id]
-
-    async def play_tts_response(self, call: Call, text_or_url: str):
         logger.info(f"[{call.id}] Playing audio for: '{text_or_url[:50]}...'")
         try:
             if text_or_url.startswith("http"):
@@ -188,13 +201,20 @@ class VoiceAIAgent(Consumer):
                 filename = await generate_tts_audio(text_or_url, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
             
+            # Set state before playing
+            self.active_calls[call.id]["is_playing"] = True
             play_action = await call.play_audio_async(url=final_audio_url)
             self.active_calls[call.id]["play_action"] = play_action
+            
+            # Wait for playback to complete (or be interrupted)
             await play_action.completed()
+
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
         finally:
+            # Reset state after playing
             if call.id in self.active_calls:
+                self.active_calls[call.id]["is_playing"] = False
                 self.active_calls[call.id]["play_action"] = None
 
 # --- FastAPI Endpoints ---
