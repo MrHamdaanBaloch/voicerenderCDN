@@ -9,8 +9,14 @@ from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from dotenv import load_dotenv
+
+# --- CORRECTED IMPORT ---
+# This is the fix. ListenAIParams is in the 'components' submodule.
 from signalwire.relay.consumer import Consumer
-from signalwire.relay.calling import Call, ListenAIParams
+from signalwire.relay.calling import Call
+from signalwire.relay.calling.components import ListenAIParams
+# ------------------------
+
 import redis
 import json
 import random
@@ -40,15 +46,13 @@ THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
 groq_client = Groq(api_key=GROQ_API_KEY)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
-# --- Directory Setup ---
+# --- Directory and TTS Logic (No changes needed here) ---
 for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
     if not os.path.exists(directory):
         os.makedirs(directory)
 app.mount("/audio", StaticFiles(directory=OPTIMIZED_AUDIO_DIR), name="audio")
 
-# --- TTS Generation Logic (No changes needed here) ---
 async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> str:
-    # ... [This function remains the same]
     request_id = str(uuid.uuid4())
     raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
     optimized_filename = f"{request_id}_optimized.wav"
@@ -58,18 +62,12 @@ async def generate_tts_audio(text: str, background_tasks: BackgroundTasks) -> st
     background_tasks.add_task(cleanup_file, raw_filepath)
     background_tasks.add_task(cleanup_file, optimized_filepath)
 
-    generation_success = False
     try:
-        logger.info(f"Attempting Groq TTS for text: '{text[:30]}...'")
         tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
         tts_response.write_to_file(raw_filepath)
-        generation_success = True
     except Exception as e:
         logger.error(f"Groq TTS failed: {e}", exc_info=True)
-
-    if not generation_success:
-        # Fallback logic can be added here if needed
-        raise HTTPException(status_code=500, detail="All TTS providers failed.")
+        raise HTTPException(status_code=500, detail="TTS provider failed.")
 
     command = ["ffmpeg", "-i", raw_filepath, "-ar", "8000", "-ac", "1", "-acodec", TELEPHONY_CODEC, "-y", optimized_filepath]
     process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
@@ -85,7 +83,7 @@ def cleanup_file(path: str):
     except Exception:
         pass
 
-# --- SignalWire Relay Logic ---
+# --- SignalWire Relay Logic (Corrected and Finalized) ---
 class VoiceAIAgent(Consumer):
     def setup(self):
         self.project = SIGNALWIRE_PROJECT_ID
@@ -102,6 +100,7 @@ class VoiceAIAgent(Consumer):
         await call.answer()
         
         try:
+            # CORRECT: Using the imported ListenAIParams class
             listen_params = ListenAIParams(
                 ai_engine='deepgram',
                 deepgram={
@@ -111,74 +110,59 @@ class VoiceAIAgent(Consumer):
                     'sample_rate': 8000,
                     'smart_format': True,
                     'endpointing': 300,
-                    'interim_results': False,
+                    'interim_results': False
                 }
             )
             
+            # CORRECT: Using the documented call.ai.listen method
             ai_listener = await call.ai.listen(listen_params)
-            ai_listener.on('message', lambda msg: self.on_ai_message(call, msg))
+            ai_listener.on('message', lambda msg: asyncio.create_task(self.on_ai_message(call, msg)))
 
-            # Start the conversation with a welcome message
+            # Start the conversation
             asyncio.create_task(self.play_tts_with_barge_in(call, f"{TTS_ORCHESTRATOR_URL}/audio/welcome.wav"))
 
         except Exception as e:
             logger.error(f"[{call.id}] Error setting up AI listener: {e}", exc_info=True)
             await call.hangup()
-        finally:
-            if call.id in self.active_calls and call.active:
-                logger.info(f"[{call.id}] Call ended. Cleaning up.")
-                del self.active_calls[call.id]
 
     async def on_ai_message(self, call: Call, message):
-        """Handles incoming transcription messages from the AI listener."""
         try:
-            if not call.active or call.id not in self.active_calls:
-                return
+            if not call.active or call.id not in self.active_calls: return
 
             transcript = message.result.text
             if transcript and message.result.final:
                 logger.info(f"[{call.id}] Final Transcript: '{transcript}'")
 
-                # Elegant barge-in: if we are playing audio, stop it immediately.
                 if self.active_calls[call.id].get("is_playing"):
                     logger.info(f"[{call.id}] Barge-in detected. Stopping playback.")
                     await self.active_calls[call.id]["play_action"].stop()
                 
-                # Process the user's input in a separate, non-blocking task
-                asyncio.create_task(self.process_user_input(call, transcript))
+                await self.process_user_input(call, transcript)
         except Exception as e:
             logger.error(f"[{call.id}] Error in on_ai_message: {e}", exc_info=True)
 
     async def process_user_input(self, call: Call, user_transcript: str):
-        """Takes user transcript, gets LLM response, and plays it back."""
-        if not call.active or not user_transcript:
-            return
-            
+        if not call.active or not user_transcript: return
         redis_key = f"conversation:{call.id}"
         try:
-            # Play a subtle thinking sound to acknowledge input
             thinking_sound = random.choice(THINKING_SOUNDS)
             asyncio.create_task(call.play_audio(url=f"{TTS_ORCHESTRATOR_URL}/audio/{thinking_sound}"))
 
-            # Retrieve conversation history
             history_json = redis_client.get(redis_key)
             conversation_history = json.loads(history_json) if history_json else []
             
-            # Construct messages for the LLM
-            messages = [{"role": "system", "content": "You are a helpful and concise voice assistant. Your responses should be friendly and clear."}]
+            messages = [{"role": "system", "content": "You are a helpful and concise voice assistant."}]
             messages.extend(conversation_history)
             messages.append({"role": "user", "content": user_transcript})
 
-            # Get response from Groq
-            chat_completion = groq_client.chat.completions.create(messages=messages, model="llama3-8b-8192")
+            chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
             llm_response_text = chat_completion.choices[0].message.content
             logger.info(f"[{call.id}] LLM Response: '{llm_response_text}'")
 
-            # Update conversation history
+            conversation_history.append({"role": "user", "content": user_transcript})
             conversation_history.append({"role": "assistant", "content": llm_response_text})
             redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
-            # Play the response
             if llm_response_text:
                 await self.play_tts_with_barge_in(call, llm_response_text)
 
@@ -188,10 +172,7 @@ class VoiceAIAgent(Consumer):
                 await self.play_tts_with_barge_in(call, "I'm sorry, a system error occurred.")
 
     async def play_tts_with_barge_in(self, call: Call, text_or_url: str):
-        """Plays TTS audio and manages state for barge-in."""
-        if not call.active or call.id not in self.active_calls:
-            return
-
+        if not call.active or call.id not in self.active_calls: return
         logger.info(f"[{call.id}] Playing audio for: '{text_or_url[:50]}...'")
         try:
             if text_or_url.startswith("http"):
@@ -201,23 +182,25 @@ class VoiceAIAgent(Consumer):
                 filename = await generate_tts_audio(text_or_url, background_tasks)
                 final_audio_url = f"{TTS_ORCHESTRATOR_URL}/audio/{filename}"
             
-            # Set state before playing
             self.active_calls[call.id]["is_playing"] = True
             play_action = await call.play_audio_async(url=final_audio_url)
             self.active_calls[call.id]["play_action"] = play_action
             
-            # Wait for playback to complete (or be interrupted)
             await play_action.completed()
 
         except Exception as e:
             logger.error(f"[{call.id}] Failed to play TTS response: {e}", exc_info=True)
         finally:
-            # Reset state after playing
             if call.id in self.active_calls:
                 self.active_calls[call.id]["is_playing"] = False
                 self.active_calls[call.id]["play_action"] = None
 
-# --- FastAPI Endpoints ---
+    async def on_call_ended(self, call: Call):
+        logger.info(f"[{call.id}] Call has ended. Cleaning up resources.")
+        if call.id in self.active_calls:
+            del self.active_calls[call.id]
+
+# --- FastAPI Endpoints and Startup Logic ---
 @app.get("/")
 def read_root():
     return {"message": "Voice Agent Service is running."}
@@ -228,6 +211,10 @@ def start_relay_consumer():
         logger.critical("FATAL: Missing critical environment variables. The Relay Consumer will not start.")
         return
         
-    thread = threading.Thread(target=VoiceAIAgent().run, daemon=True)
+    consumer = VoiceAIAgent()
+    # Register the cleanup handler for when calls end
+    consumer.on_call_ended = VoiceAIAgent.on_call_ended
+    
+    thread = threading.Thread(target=consumer.run, daemon=True)
     thread.start()
     logger.info("SignalWire Relay Consumer started in a background thread.")
