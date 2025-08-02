@@ -121,6 +121,10 @@ async def process_transcript(call_sid: str, transcript: str):
 
 # --- FastAPI Endpoints (Pure Compatibility API Architecture) ---
 
+@app.get("/")
+async def root():
+    return {"message": "Voice Agent Service is running and ready to receive calls."}
+
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request):
     """This is the webhook SignalWire calls. It responds with cXML to start the audio stream."""
