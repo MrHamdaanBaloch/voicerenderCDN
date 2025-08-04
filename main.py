@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, Response, Request, BackgroundTasks, HTTP
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from dotenv import load_dotenv
-from signalwire.voice_response import VoiceResponse
+from signalwire.voice_response import VoiceResponse, Start, Stream
 from signalwire.rest import Client as SignalwireRestClient
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 import redis
@@ -137,8 +137,11 @@ async def handle_incoming_call(request: Request):
     
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
-    # Use the <Stream> verb to start sending audio to our WebSocket.
-    response.stream(url=websocket_url)
+    # Use the <Start> and <Stream> verbs to start sending audio to our WebSocket,
+    # following the official documentation's append pattern.
+    start = Start()
+    start.append(Stream(url=websocket_url))
+    response.append(start)
     
     # This pause is crucial. It keeps the cXML document "running" and the call active
     # while the WebSocket is streaming. The conversation happens in the stream.
