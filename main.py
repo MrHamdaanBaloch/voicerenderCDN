@@ -130,7 +130,7 @@ async def handle_incoming_call(request: Request):
     """This is the webhook SignalWire calls. It responds with cXML to start the audio stream."""
     body = await request.form()
     call_sid = body.get("CallSid")
-    logger.info(f"📞 Compatibility API received incoming call {call_sid}. Responding with cXML to start stream.")
+    logger.info(f"📞 INCOMING CALL [{call_sid}]: Received request from SignalWire. Body: {body}")
     
     response = VoiceResponse()
     response.say("Hello! Please wait a moment while I connect you to the AI agent.")
@@ -145,8 +145,9 @@ async def handle_incoming_call(request: Request):
     
     # This pause is crucial. It keeps the cXML document "running" and the call active
     # while the WebSocket is streaming. The conversation happens in the stream.
-    response.pause(length=180) 
+    response.pause(length=180)
 
+    logger.info(f"[{call_sid}] Responding with cXML: {str(response)}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -157,29 +158,43 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     try:
         dg_connection = deepgram_client.listen.asynclive.v("1")
-        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True)
-        await dg_connection.start(options)
 
-        async def on_message(self, result, **kwargs):
+        async def on_message(result, **kwargs):
             transcript = result.channel.alternatives[0].transcript
             if transcript and result.is_final:
                 # When we get a final transcript, trigger the processing logic.
                 asyncio.create_task(process_transcript(call_sid, transcript))
+        
+        async def on_error(error, **kwargs):
+            logger.error(f"[{call_sid}] Deepgram error: {error}")
 
         dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
+        dg_connection.on(LiveTranscriptionEvents.Error, on_error)
+
+        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True, keepalive="true")
+        await dg_connection.start(options)
+        logger.info(f"[{call_sid}] Successfully connected to Deepgram.")
 
         while True:
             message_str = await websocket.receive_text()
             message = json.loads(message_str)
+            event = message.get('event')
             
-            if message['event'] == 'media':
+            if event == 'media':
                 payload = base64.b64decode(message['media']['payload'])
+                logger.debug(f"[{call_sid}] Relaying audio payload of size {len(payload)} to Deepgram.")
                 await dg_connection.send(payload)
-            elif message['event'] == 'stop':
-                logger.info(f"[{call_sid}] Media stream stopped by SignalWire.")
+            elif event == 'start':
+                logger.info(f"[{call_sid}] Received start event from SignalWire: {message}")
+            elif event == 'stop':
+                logger.info(f"[{call_sid}] Received stop event from SignalWire. Closing connections.")
                 break
+            else:
+                logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {event}")
     
     except Exception as e:
         logger.error(f"[{call_sid}] Error in WebSocket handler: {e}", exc_info=True)
     finally:
+        logger.info(f"[{call_sid}] Closing Deepgram connection.")
+        await dg_connection.finish()
         logger.info(f"[{call_sid}] WebSocket connection closed for {call_sid}.")
