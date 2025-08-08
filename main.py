@@ -45,40 +45,35 @@ for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
         os.makedirs(directory)
 app.mount("/audio", StaticFiles(directory=OPTIMIZED_AUDIO_DIR), name="audio")
 
-async def generate_tts_audio(text: str, call_sid: str) -> tuple[str, str]:
-    """Generates TTS audio, returns raw and optimized file paths."""
+async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
+    """Generates raw pcm_mulaw audio bytes suitable for a media stream."""
     request_id = str(uuid.uuid4())
-    logger.info(f"[{call_sid}] TTS Request [{request_id}]: Generating audio for text: '{text[:50]}...'")
+    logger.info(f"[{call_sid}] TTS Request [{request_id}]: Generating mu-law bytes for stream. Text: '{text[:50]}...'")
     raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
-    optimized_filename = f"{request_id}_optimized.wav"
-    optimized_filepath = os.path.join(OPTIMIZED_AUDIO_DIR, optimized_filename)
+    mulaw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_mulaw.raw")
 
     try:
         tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
         tts_response.write_to_file(raw_filepath)
-        logger.info(f"[{call_sid}] TTS Request [{request_id}]: Successfully received audio from Groq.")
-    except Exception as e:
-        logger.error(f"[{call_sid}] TTS Request [{request_id}]: Groq TTS API failed.", exc_info=True)
-        raise
 
-    command = [
-        "ffmpeg", "-i", raw_filepath, 
-        "-af", "aresample=resampler=soxr", # High-quality resampling
-        "-ar", "8000", "-ac", "1", 
-        "-acodec", TELEPHONY_CODEC, 
-        "-y", optimized_filepath
-    ]
-    process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
-    _, stderr = await process.communicate()
-    
-    if process.returncode != 0:
-        error_message = stderr.decode()
-        logger.error(f"[{call_sid}] TTS Request [{request_id}]: ffmpeg conversion failed: {error_message}")
+        command = [
+            "ffmpeg", "-i", raw_filepath,
+            "-ar", "8000", "-ac", "1",
+            "-f", "mulaw", "-y", mulaw_filepath
+        ]
+        process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise Exception(f"ffmpeg mu-law conversion failed: {stderr.decode()}")
+
+        async with aiofiles.open(mulaw_filepath, 'rb') as f:
+            audio_bytes = await f.read()
+        
+        logger.info(f"[{call_sid}] TTS Request [{request_id}]: Successfully generated {len(audio_bytes)} bytes of mu-law audio.")
+        return audio_bytes
+    finally:
         cleanup_file(raw_filepath)
-        raise Exception(f"ffmpeg failed: {error_message}")
-    
-    logger.info(f"[{call_sid}] TTS Request [{request_id}]: Successfully converted audio to {TELEPHONY_CODEC}.")
-    return raw_filepath, optimized_filepath
+        cleanup_file(mulaw_filepath)
 
 def cleanup_file(path: str):
     """Safely removes a file if it exists."""
@@ -105,21 +100,8 @@ async def send_audio_payload(websocket: WebSocket, stream_sid: str, audio_bytes:
 
 # --- Application Startup Logic ---
 
-@app.on_event("startup")
-async def startup_event():
-    """Tasks to run on application startup."""
-    error_audio_path = os.path.join(OPTIMIZED_AUDIO_DIR, "error_message.wav")
-    if not os.path.exists(error_audio_path):
-        logger.info("Startup: Generating generic error message audio file...")
-        try:
-            error_text = "I'm sorry, I'm having a little trouble at the moment. Could you please say that again?"
-            # Pass a dummy call_sid for logging purposes
-            raw_path, optimized_path = await generate_tts_audio(error_text, "startup_task")
-            os.rename(optimized_path, error_audio_path)
-            cleanup_file(raw_path)
-            logger.info("Startup: Successfully generated and saved error_message.wav.")
-        except Exception as e:
-            logger.error(f"Startup: Failed to generate error message audio: {e}", exc_info=True)
+# --- Application Startup Logic ---
+# No startup tasks needed for this simplified architecture.
 
 # --- FastAPI Endpoints (Decoupled Welcome Message Architecture) ---
 
@@ -128,29 +110,18 @@ async def root():
     return {"message": "Voice Agent Service is running and ready to receive calls."}
 
 @app.post("/incoming_call")
-async def handle_incoming_call(request: Request, background_tasks: BackgroundTasks):
-    """Plays a welcome message then starts a bidirectional audio stream."""
+async def handle_incoming_call(request: Request):
+    """Responds with cXML to play a welcome message and then start a stream."""
     body = await request.form()
     call_sid = body.get("CallSid")
     logger.info(f"📞 INCOMING CALL [{call_sid}]: From: {body.get('From', 'N/A')}, To: {body.get('To', 'N/A')}")
     
     response = VoiceResponse()
     
-    try:
-        logger.info(f"[{call_sid}] Generating welcome message audio.")
-        welcome_text = "Welcome to the voice assistant. How can I help you today?"
-        raw_path, optimized_path = await generate_tts_audio(welcome_text, call_sid)
-        
-        cleanup_file(raw_path)
-        background_tasks.add_task(delayed_cleanup, optimized_path, 30)
-
-        audio_url = f"{RENDER_EXTERNAL_URL}/audio/{os.path.basename(optimized_path)}"
-        response.append(Play(url=audio_url))
-        logger.info(f"[{call_sid}] Enqueued welcome message: {audio_url}")
-
-    except Exception as e:
-        logger.error(f"[{call_sid}] Failed to generate welcome message, responding with fallback.", exc_info=True)
-        response.say("Sorry, we're having trouble connecting you right now. Please try again later.")
+    # Use SignalWire's native TTS for maximum reliability
+    welcome_text = "Welcome to the voice assistant. How can I help you today?"
+    response.say(welcome_text, voice="en-US-Standard-A")
+    logger.info(f"[{call_sid}] Enqueued <Say> verb for welcome message.")
 
     # Connect to the WebSocket for the live conversation
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
@@ -158,7 +129,7 @@ async def handle_incoming_call(request: Request, background_tasks: BackgroundTas
     connect.stream(url=websocket_url)
     response.append(connect)
     
-    logger.info(f"[{call_sid}] Responding with cXML to play welcome and then stream.")
+    logger.info(f"[{call_sid}] Responding with cXML to <Say> welcome and then <Connect> to stream.")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -185,14 +156,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     async def process_and_respond(transcript: str):
         logger.info(f"[{call_sid}] PROCESSING transcript: '{transcript}'")
         redis_key = f"conversation:{call_sid}"
-        raw_audio_path, optimized_audio_path = None, None
         
         try:
             # 1. Retrieve conversation history from Redis
-            logger.debug(f"[{call_sid}] Accessing Redis with key: {redis_key}")
             history_json = redis_client.get(redis_key)
             conversation_history = json.loads(history_json) if history_json else []
-            logger.debug(f"[{call_sid}] Retrieved {len(conversation_history)} items from history.")
             
             # 2. Prepare and send request to Groq LLM
             system_prompt = (
@@ -213,33 +181,23 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             conversation_history.append({"role": "user", "content": transcript})
             conversation_history.append({"role": "assistant", "content": llm_response_text})
             redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
-            logger.debug(f"[{call_sid}] Updated conversation history in Redis.")
 
-            # 4. Generate TTS audio and send to SignalWire
+            # 4. Generate TTS audio as mu-law bytes and send to SignalWire
             if llm_response_text:
-                raw_audio_path, optimized_audio_path = await generate_tts_audio(llm_response_text, call_sid)
-                async with aiofiles.open(optimized_audio_path, 'rb') as f:
-                    audio_bytes = await f.read()
+                audio_bytes = await generate_tts_mulaw_bytes_for_stream(llm_response_text, call_sid)
                 await send_audio_payload(websocket, stream_sid, audio_bytes)
-                logger.info(f"[{call_sid}] Sent {len(audio_bytes)} bytes of audio to SignalWire.")
 
         except Exception as e:
             logger.error(f"[{call_sid}] An error occurred in process_and_respond.", exc_info=True)
             try:
                 logger.info(f"[{call_sid}] Attempting to play fallback error message.")
-                error_audio_path = os.path.join(OPTIMIZED_AUDIO_DIR, "error_message.wav")
-                if os.path.exists(error_audio_path):
-                    async with aiofiles.open(error_audio_path, 'rb') as f:
-                        audio_bytes = await f.read()
-                    await send_audio_payload(websocket, stream_sid, audio_bytes)
-                    logger.info(f"[{call_sid}] Successfully sent fallback error message.")
+                error_text = "I'm sorry, I'm having a little trouble at the moment. Could you please say that again?"
+                audio_bytes = await generate_tts_mulaw_bytes_for_stream(error_text, call_sid)
+                await send_audio_payload(websocket, stream_sid, audio_bytes)
             except Exception as fallback_e:
-                logger.error(f"[{call_sid}] CRITICAL: Failed to send fallback error message.", exc_info=True)
-        finally:
-            # 5. Cleanup generated audio files
-            if raw_audio_path: cleanup_file(raw_audio_path)
-            if optimized_audio_path: asyncio.create_task(delayed_cleanup(optimized_audio_path, 600))
-            logger.info(f"[{call_sid}] FINISHED processing transcript: '{transcript}'")
+                logger.error(f"[{call_sid}] CRITICAL: Failed to generate and send fallback error message.", exc_info=True)
+        
+        logger.info(f"[{call_sid}] FINISHED processing transcript: '{transcript}'")
 
     async def on_message(self, result, **kwargs):
         transcript = result.channel.alternatives[0].transcript.strip()
