@@ -35,7 +35,8 @@ OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-config = DeepgramClientOptions(options={"keepalive": "true"})
+# Correctly configure keepalive at the client level
+config = DeepgramClientOptions(keepalive="true")
 deepgram_client = DeepgramClient(DEEPGRAM_API_KEY, config)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
@@ -155,67 +156,39 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     logger.info(f"🎙️ WebSocket connection established for call {call_sid}")
 
     dg_connection = deepgram_client.listen.asynclive.v("1")
-    
-    stop_event = asyncio.Event()
 
-    async def deepgram_keepalive(dg_connection):
-        """Sends a keepalive message to Deepgram every 4 seconds."""
-        while not stop_event.is_set():
-            try:
-                dg_connection.keepalive()
-                logger.debug(f"[{call_sid}] Sent keepalive to Deepgram.")
-                await asyncio.sleep(4)
-            except Exception as e:
-                logger.warning(f"[{call_sid}] Failed to send keepalive to Deepgram: {e}")
-                break
-
-    async def process_and_respond(transcript: str, is_welcome_message: bool = False):
+    async def process_and_respond(transcript: str):
         logger.info(f"[{call_sid}] PROCESSING transcript: '{transcript}'")
         redis_key = f"conversation:{call_sid}"
         
         try:
-            if is_welcome_message:
-                llm_response_text = "Welcome to the voice assistant. How can I help you today?"
-                logger.info(f"[{call_sid}] Using static welcome message.")
-            else:
-                # 1. Retrieve conversation history from Redis
-                history_json = redis_client.get(redis_key)
-                conversation_history = json.loads(history_json) if history_json else []
-                
-                # 2. Prepare and send request to Groq LLM
-                system_prompt = (
-                    "You are a highly responsive, friendly, and human-like voice assistant. "
-                    "Keep your responses concise and conversational, suitable for a real-time phone call. "
-                    "Your goal is to provide accurate information quickly and naturally."
-                )
-                messages = [{"role": "system", "content": system_prompt}]
-                messages.extend(conversation_history)
-                messages.append({"role": "user", "content": transcript})
-                
-                logger.info(f"[{call_sid}] Sending transcript to LLM...")
-                chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-                llm_response_text = chat_completion.choices[0].message.content
-                logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
+            history_json = redis_client.get(redis_key)
+            conversation_history = json.loads(history_json) if history_json else []
+            
+            system_prompt = (
+                "You are a highly responsive, friendly, and human-like voice assistant. "
+                "Keep your responses concise and conversational, suitable for a real-time phone call. "
+                "Your goal is to provide accurate information quickly and naturally."
+            )
+            messages = [{"role": "system", "content": system_prompt}]
+            messages.extend(conversation_history)
+            messages.append({"role": "user", "content": transcript})
+            
+            logger.info(f"[{call_sid}] Sending transcript to LLM...")
+            chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
+            llm_response_text = chat_completion.choices[0].message.content
+            logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
 
-                # 3. Update conversation history in Redis
-                conversation_history.append({"role": "user", "content": transcript})
-                conversation_history.append({"role": "assistant", "content": llm_response_text})
-                redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
+            conversation_history.append({"role": "user", "content": transcript})
+            conversation_history.append({"role": "assistant", "content": llm_response_text})
+            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
-            # 4. Generate TTS audio as mu-law bytes and send to SignalWire
             if llm_response_text:
                 audio_bytes = await generate_tts_mulaw_bytes_for_stream(llm_response_text, call_sid)
                 await send_audio_payload(websocket, stream_sid, audio_bytes)
 
         except Exception as e:
             logger.error(f"[{call_sid}] An error occurred in process_and_respond.", exc_info=True)
-            try:
-                logger.info(f"[{call_sid}] Attempting to play fallback error message.")
-                error_text = "I'm sorry, I'm having a little trouble at the moment. Could you please say that again?"
-                audio_bytes = await generate_tts_mulaw_bytes_for_stream(error_text, call_sid)
-                await send_audio_payload(websocket, stream_sid, audio_bytes)
-            except Exception as fallback_e:
-                logger.error(f"[{call_sid}] CRITICAL: Failed to generate and send fallback error message.", exc_info=True)
         
         logger.info(f"[{call_sid}] FINISHED processing transcript: '{transcript}'")
 
@@ -231,33 +204,34 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
     dg_connection.on(LiveTranscriptionEvents.Error, on_error)
 
+    stream_sid = None
     try:
-        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True, interim_results=False, utterance_end_ms="1000", vad_events=True, endpointing=600)
-        logger.info(f"[{call_sid}] Connecting to Deepgram with options: {options}")
-        await dg_connection.start(options)
+        # Correctly pass options as keyword arguments
+        await dg_connection.start(
+            model="nova-2-phonecall",
+            language="en-US",
+            encoding="mulaw",
+            sample_rate=8000,
+            punctuate=True,
+            smart_format=True,
+            interim_results=False,
+            utterance_end_ms="1000",
+            vad_events=True,
+            endpointing=600
+        )
         logger.info(f"[{call_sid}] Successfully connected to Deepgram.")
-
-        keepalive_task = asyncio.create_task(deepgram_keepalive(dg_connection))
-        stream_sid = None
 
         while True:
             message_str = await websocket.receive_text()
             message = json.loads(message_str)
             event = message.get('event')
             
-            logger.debug(f"[{call_sid}] Received WebSocket message from SignalWire: {event}")
-
-            if event == 'connected':
-                logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
-            elif event == 'start':
+            if event == 'start':
                 stream_sid = message['start']['streamSid']
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
-                # Play the welcome message now that the stream is officially started
-                asyncio.create_task(process_and_respond("Welcome", is_welcome_message=True))
             elif event == 'media':
                 payload = base64.b64decode(message['media']['payload'])
                 if payload:
-                    # logger.debug(f"[{call_sid}] Relaying {len(payload)} bytes of media to Deepgram.")
                     await dg_connection.send(payload)
             elif event == 'stop':
                 logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
@@ -266,11 +240,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {message}")
     
     except Exception as e:
-        logger.error(f"[{call_sid}] Error in WebSocket handler: {e}", exc_info=True)
+        logger.error(f"[{call_sid}] CRITICAL ERROR in WebSocket handler: {e}", exc_info=True)
     finally:
-        stop_event.set()
-        if 'keepalive_task' in locals() and not keepalive_task.done():
-            keepalive_task.cancel()
         logger.info(f"[{call_sid}] Closing Deepgram connection.")
         await dg_connection.finish()
         logger.info(f"[{call_sid}] WebSocket connection closed for {call_sid}.")
