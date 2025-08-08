@@ -111,21 +111,42 @@ async def root():
 
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request):
-    """Responds with cXML to connect the call to our WebSocket for bidirectional streaming."""
+    """Responds with cXML to start a non-blocking stream with status callbacks, say a welcome message, and pause."""
     body = await request.form()
     call_sid = body.get("CallSid")
     logger.info(f"📞 INCOMING CALL [{call_sid}]: From: {body.get('From', 'N/A')}, To: {body.get('To', 'N/A')}")
     
     response = VoiceResponse()
     
-    # Immediately connect to the WebSocket. This is the only verb in the response.
+    # 1. Start the media stream in the background with status callbacks for visibility
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
-    connect = Connect()
-    connect.stream(url=websocket_url)
-    response.append(connect)
+    status_callback_url = f"{RENDER_EXTERNAL_URL}/stream_status"
     
-    logger.info(f"[{call_sid}] Responding with cXML to <Connect> to WebSocket: {websocket_url}")
+    start = response.start()
+    start.stream(url=websocket_url, status_callback=status_callback_url, status_callback_method="POST")
+    logger.info(f"[{call_sid}] Enqueued <Start><Stream> to {websocket_url} with status callback to {status_callback_url}.")
+
+    # 2. Immediately after, enqueue the welcome message
+    welcome_text = "Welcome to the voice assistant. Please wait a moment while we connect you."
+    response.say(welcome_text, voice="en-US-Standard-A")
+    logger.info(f"[{call_sid}] Enqueued <Say> verb for welcome message.")
+
+    # 3. Add a long pause to keep the call alive, allowing the stream to connect.
+    response.pause(length=30)
+    logger.info(f"[{call_sid}] Enqueued <Pause length=30> to prevent premature hangup.")
+    
+    logger.info(f"[{call_sid}] Responding with cXML for stabilized call handoff.")
     return Response(content=str(response), media_type="application/xml")
+
+@app.post("/stream_status")
+async def handle_stream_status(request: Request):
+    """Receives and logs status updates for the WebSocket stream."""
+    body = await request.form()
+    call_sid = body.get("CallSid")
+    stream_sid = body.get("StreamSid")
+    event = body.get("StreamEvent")
+    logger.info(f"STREAM STATUS [{call_sid}][{stream_sid}]: Event: {event}. Full data: {body}")
+    return Response(status_code=200)
 
 @app.websocket("/media/{call_sid}")
 async def media_websocket_handler(websocket: WebSocket, call_sid: str):
