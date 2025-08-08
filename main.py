@@ -11,7 +11,7 @@ from groq import Groq
 from dotenv import load_dotenv
 from signalwire.voice_response import VoiceResponse, Start, Stream
 from signalwire.rest import Client as SignalwireRestClient
-from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
+from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 import redis
 
 # --- Load Environment Variables & Configuration ---
@@ -34,6 +34,7 @@ TELEPHONY_CODEC = "pcm_mulaw"
 OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
+MULAW_SILENCE_CHUNK = b'\xff' * 320 # 40ms of mu-law silence
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 deepgram_client = DeepgramClient(DEEPGRAM_API_KEY)
@@ -156,13 +157,24 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     await websocket.accept()
     logger.info(f"🎙️ WebSocket connection established for call {call_sid}")
 
+    keepalive_task = None
+    
+    async def send_keepalive(dg_connection):
+        while True:
+            try:
+                await dg_connection.send(MULAW_SILENCE_CHUNK)
+                logger.debug(f"[{call_sid}] Sent silent audio chunk to Deepgram.")
+                await asyncio.sleep(4)
+            except Exception as e:
+                logger.warning(f"[{call_sid}] Could not send keepalive audio: {e}")
+                break
+
     try:
         dg_connection = deepgram_client.listen.asynclive.v("1")
 
         async def on_message(result, **kwargs):
             transcript = result.channel.alternatives[0].transcript
             if transcript and result.is_final:
-                # When we get a final transcript, trigger the processing logic.
                 asyncio.create_task(process_transcript(call_sid, transcript))
         
         async def on_error(error, **kwargs):
@@ -171,9 +183,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
         dg_connection.on(LiveTranscriptionEvents.Error, on_error)
 
-        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True, keepalive="true")
+        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True)
         await dg_connection.start(options)
         logger.info(f"[{call_sid}] Successfully connected to Deepgram.")
+
+        # Start sending silent audio to keep the connection alive
+        keepalive_task = asyncio.create_task(send_keepalive(dg_connection))
 
         while True:
             message_str = await websocket.receive_text()
@@ -195,6 +210,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     except Exception as e:
         logger.error(f"[{call_sid}] Error in WebSocket handler: {e}", exc_info=True)
     finally:
+        if keepalive_task:
+            keepalive_task.cancel()
         logger.info(f"[{call_sid}] Closing Deepgram connection.")
         await dg_connection.finish()
         logger.info(f"[{call_sid}] WebSocket connection closed for {call_sid}.")
