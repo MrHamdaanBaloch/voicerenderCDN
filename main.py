@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, Response, Request, BackgroundTasks, HTTP
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from dotenv import load_dotenv
-from signalwire.voice_response import VoiceResponse, Start, Stream
+from signalwire.voice_response import VoiceResponse, Connect, Stream
 from signalwire.rest import Client as SignalwireRestClient
 from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 import redis
@@ -34,7 +34,6 @@ TELEPHONY_CODEC = "pcm_mulaw"
 OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
-MULAW_SILENCE_CHUNK = b'\xff' * 320 # 40ms of mu-law silence
 
 groq_client = Groq(api_key=GROQ_API_KEY)
 # Configure Deepgram client with keepalive option per official documentation
@@ -139,19 +138,15 @@ async def handle_incoming_call(request: Request):
     logger.info(f"📞 INCOMING CALL [{call_sid}]: Received request from SignalWire. Body: {body}")
     
     response = VoiceResponse()
-    
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
-    # Start the stream first to ensure we capture audio from the beginning of the call.
-    start = Start()
-    start.append(Stream(url=websocket_url))
-    response.append(start)
+    # Use <Connect><Stream/></Connect> for a bidirectional stream per official docs.
+    # This is a blocking verb that holds the call open for the duration of the stream.
+    connect = Connect()
+    connect.stream(url=websocket_url)
+    response.append(connect)
 
-    # This pause is crucial. It keeps the cXML document "running" and the call active
-    # while the WebSocket is streaming. The conversation happens in the stream.
-    response.pause(length=180)
-
-    logger.info(f"[{call_sid}] Responding with cXML: {str(response)}")
+    logger.info(f"[{call_sid}] Responding with cXML to start bidirectional stream: {str(response)}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -159,18 +154,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     """This WebSocket endpoint receives audio from SignalWire and forwards it to Deepgram."""
     await websocket.accept()
     logger.info(f"🎙️ WebSocket connection established for call {call_sid}")
-
-    keepalive_task = None
-    
-    async def send_keepalive(dg_connection):
-        while True:
-            try:
-                await dg_connection.send(MULAW_SILENCE_CHUNK)
-                logger.debug(f"[{call_sid}] Sent silent audio chunk to Deepgram.")
-                await asyncio.sleep(4)
-            except Exception as e:
-                logger.warning(f"[{call_sid}] Could not send keepalive audio: {e}")
-                break
 
     try:
         dg_connection = deepgram_client.listen.asynclive.v("1")
@@ -185,8 +168,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         async def on_error(self, error, **kwargs):
             logger.error(f"[{call_sid}] Deepgram on_error triggered: {error}")
 
+        async def on_speech_started(self, speech_started, **kwargs):
+            logger.info(f"[{call_sid}] Deepgram on_speech_started triggered: {speech_started}")
+
         dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
         dg_connection.on(LiveTranscriptionEvents.Error, on_error)
+        dg_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
 
         options = LiveOptions(
             model="nova-2-phonecall",
@@ -203,20 +190,29 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         await dg_connection.start(options)
         logger.info(f"[{call_sid}] Successfully connected to Deepgram with advanced options.")
 
-        # Start sending silent audio to keep the connection alive
-        keepalive_task = asyncio.create_task(send_keepalive(dg_connection))
-
         while True:
             message_str = await websocket.receive_text()
+            logger.debug(f"[{call_sid}] Raw WS message from SignalWire: {message_str[:250]}...")
             message = json.loads(message_str)
             event = message.get('event')
             
             if event == 'media':
                 payload = base64.b64decode(message['media']['payload'])
-                logger.debug(f"[{call_sid}] Relaying audio payload of size {len(payload)} to Deepgram.")
-                await dg_connection.send(payload)
+                if payload:
+                    logger.info(f"[{call_sid}] Relaying audio payload of size {len(payload)} to Deepgram.")
+                    await dg_connection.send(payload)
+                else:
+                    logger.warning(f"[{call_sid}] Received empty media payload.")
             elif event == 'start':
                 logger.info(f"[{call_sid}] Received start event from SignalWire: {message}")
+                # Now that the stream is confirmed, play the welcome message via REST API
+                try:
+                    welcome_message = "Hello! How can I help you today?"
+                    twiml_for_welcome = f'<Response><Say voice="Polly.Joanna-Neural">{welcome_message}</Say></Response>'
+                    logger.info(f"[{call_sid}] Sending TwiML for welcome message: {twiml_for_welcome}")
+                    sw_rest_client.calls(call_sid).update(twiml=twiml_for_welcome)
+                except Exception as e:
+                    logger.error(f"[{call_sid}] Error playing welcome message: {e}")
             elif event == 'stop':
                 logger.info(f"[{call_sid}] Received stop event from SignalWire. Closing connections.")
                 break
@@ -226,8 +222,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     except Exception as e:
         logger.error(f"[{call_sid}] Error in WebSocket handler: {e}", exc_info=True)
     finally:
-        if keepalive_task:
-            keepalive_task.cancel()
         logger.info(f"[{call_sid}] Closing Deepgram connection.")
         await dg_connection.finish()
         logger.info(f"[{call_sid}] WebSocket connection closed for {call_sid}.")
