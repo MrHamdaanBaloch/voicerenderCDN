@@ -37,7 +37,9 @@ THINKING_SOUNDS = ["hmm.wav", "umm.wav", "thinking.wav"]
 MULAW_SILENCE_CHUNK = b'\xff' * 320 # 40ms of mu-law silence
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-deepgram_client = DeepgramClient(DEEPGRAM_API_KEY)
+# Configure Deepgram client with keepalive option per official documentation
+config = DeepgramClientOptions(options={"keepalive": "true"})
+deepgram_client = DeepgramClient(DEEPGRAM_API_KEY, config)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
 # Initialize the SignalWire REST Client
@@ -172,20 +174,32 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     try:
         dg_connection = deepgram_client.listen.asynclive.v("1")
 
-        async def on_message(result, **kwargs):
+        async def on_message(self, result, **kwargs):
             transcript = result.channel.alternatives[0].transcript
-            if transcript and result.is_final:
+            if transcript and result.speech_final:
+                logger.info(f"[{call_sid}] Received speech_final transcript: '{transcript}'")
                 asyncio.create_task(process_transcript(call_sid, transcript))
         
-        async def on_error(error, **kwargs):
+        async def on_error(self, error, **kwargs):
             logger.error(f"[{call_sid}] Deepgram error: {error}")
 
         dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
         dg_connection.on(LiveTranscriptionEvents.Error, on_error)
 
-        options = LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, punctuate=True, smart_format=True)
+        options = LiveOptions(
+            model="nova-2-phonecall",
+            language="en-US",
+            encoding="mulaw",
+            sample_rate=8000,
+            punctuate=True,
+            smart_format=True,
+            interim_results=True,
+            utterance_end_ms="1000",
+            vad_events=True,
+            endpointing=300
+        )
         await dg_connection.start(options)
-        logger.info(f"[{call_sid}] Successfully connected to Deepgram.")
+        logger.info(f"[{call_sid}] Successfully connected to Deepgram with advanced options.")
 
         # Start sending silent audio to keep the connection alive
         keepalive_task = asyncio.create_task(send_keepalive(dg_connection))
