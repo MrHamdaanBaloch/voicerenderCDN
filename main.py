@@ -86,12 +86,13 @@ def cleanup_file(path: str):
 # --- Core Voice Logic (Triggered by WebSocket) ---
 async def process_transcript(call_sid: str, transcript: str):
     """Takes a transcript, gets an LLM response, and uses the REST API to play it back."""
-    logger.info(f"[{call_sid}] Processing transcript: '{transcript}'")
+    logger.info(f"[{call_sid}] START process_transcript for transcript: '{transcript}'")
     redis_key = f"conversation:{call_sid}"
     try:
         # Play a thinking sound using the REST API to modify the live call
         thinking_sound_url = f"{RENDER_EXTERNAL_URL}/audio/{random.choice(THINKING_SOUNDS)}"
         twiml_for_thinking = f'<Response><Play>{thinking_sound_url}</Play></Response>'
+        logger.info(f"[{call_sid}] Sending TwiML for thinking sound: {twiml_for_thinking}")
         sw_rest_client.calls(call_sid).update(twiml=twiml_for_thinking)
 
         history_json = redis_client.get(redis_key)
@@ -117,10 +118,12 @@ async def process_transcript(call_sid: str, transcript: str):
             
             # Use REST client to update the live call to play the new audio
             twiml_for_response = f'<Response><Play>{final_audio_url}</Play></Response>'
+            logger.info(f"[{call_sid}] Sending TwiML for LLM response: {twiml_for_response}")
             sw_rest_client.calls(call_sid).update(twiml=twiml_for_response)
 
     except Exception as e:
         logger.error(f"[{call_sid}] Error in process_transcript: {e}", exc_info=True)
+    logger.info(f"[{call_sid}] END process_transcript")
 
 # --- FastAPI Endpoints (Pure Compatibility API Architecture) ---
 
@@ -176,13 +179,14 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         dg_connection = deepgram_client.listen.asynclive.v("1")
 
         async def on_message(self, result, **kwargs):
+            logger.debug(f"[{call_sid}] Deepgram on_message triggered.")
             transcript = result.channel.alternatives[0].transcript
             if transcript and result.speech_final:
                 logger.info(f"[{call_sid}] Received speech_final transcript: '{transcript}'")
                 asyncio.create_task(process_transcript(call_sid, transcript))
         
         async def on_error(self, error, **kwargs):
-            logger.error(f"[{call_sid}] Deepgram error: {error}")
+            logger.error(f"[{call_sid}] Deepgram on_error triggered: {error}")
 
         dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
         dg_connection.on(LiveTranscriptionEvents.Error, on_error)
