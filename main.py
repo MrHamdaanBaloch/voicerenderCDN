@@ -147,9 +147,6 @@ async def handle_incoming_call(request: Request):
     start.append(Stream(url=websocket_url))
     response.append(start)
 
-    # Now, play the welcome message using a high-quality neural voice.
-    response.say("Hello! Please wait a moment while I connect you to the AI agent.", voice="Polly.Joanna-Neural")
-    
     # This pause is crucial. It keeps the cXML document "running" and the call active
     # while the WebSocket is streaming. The conversation happens in the stream.
     response.pause(length=180)
