@@ -35,8 +35,8 @@ OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-# Correctly configure keepalive at the client level
-config = DeepgramClientOptions(keepalive="true")
+# Correctly configure keepalive at the client level as per official documentation
+config = DeepgramClientOptions(options={"keepalive": "true"})
 deepgram_client = DeepgramClient(DEEPGRAM_API_KEY, config)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
@@ -215,7 +215,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             punctuate=True,
             smart_format=True,
             interim_results=False,
-            utterance_end_ms="1000",
             vad_events=True,
             endpointing=600
         )
