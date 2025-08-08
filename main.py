@@ -111,25 +111,20 @@ async def root():
 
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request):
-    """Responds with cXML to play a welcome message and then start a stream."""
+    """Responds with cXML to connect the call to our WebSocket for bidirectional streaming."""
     body = await request.form()
     call_sid = body.get("CallSid")
     logger.info(f"📞 INCOMING CALL [{call_sid}]: From: {body.get('From', 'N/A')}, To: {body.get('To', 'N/A')}")
     
     response = VoiceResponse()
     
-    # Use SignalWire's native TTS for maximum reliability
-    welcome_text = "Welcome to the voice assistant. How can I help you today?"
-    response.say(welcome_text, voice="en-US-Standard-A")
-    logger.info(f"[{call_sid}] Enqueued <Say> verb for welcome message.")
-
-    # Connect to the WebSocket for the live conversation
+    # Immediately connect to the WebSocket. This is the only verb in the response.
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     connect = Connect()
     connect.stream(url=websocket_url)
     response.append(connect)
     
-    logger.info(f"[{call_sid}] Responding with cXML to <Say> welcome and then <Connect> to stream.")
+    logger.info(f"[{call_sid}] Responding with cXML to <Connect> to WebSocket: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -153,34 +148,38 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 logger.warning(f"[{call_sid}] Failed to send keepalive to Deepgram: {e}")
                 break
 
-    async def process_and_respond(transcript: str):
+    async def process_and_respond(transcript: str, is_welcome_message: bool = False):
         logger.info(f"[{call_sid}] PROCESSING transcript: '{transcript}'")
         redis_key = f"conversation:{call_sid}"
         
         try:
-            # 1. Retrieve conversation history from Redis
-            history_json = redis_client.get(redis_key)
-            conversation_history = json.loads(history_json) if history_json else []
-            
-            # 2. Prepare and send request to Groq LLM
-            system_prompt = (
-                "You are a highly responsive, friendly, and human-like voice assistant. "
-                "Keep your responses concise and conversational, suitable for a real-time phone call. "
-                "Your goal is to provide accurate information quickly and naturally."
-            )
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(conversation_history)
-            messages.append({"role": "user", "content": transcript})
-            
-            logger.info(f"[{call_sid}] Sending transcript to LLM...")
-            chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-            llm_response_text = chat_completion.choices[0].message.content
-            logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
+            if is_welcome_message:
+                llm_response_text = "Welcome to the voice assistant. How can I help you today?"
+                logger.info(f"[{call_sid}] Using static welcome message.")
+            else:
+                # 1. Retrieve conversation history from Redis
+                history_json = redis_client.get(redis_key)
+                conversation_history = json.loads(history_json) if history_json else []
+                
+                # 2. Prepare and send request to Groq LLM
+                system_prompt = (
+                    "You are a highly responsive, friendly, and human-like voice assistant. "
+                    "Keep your responses concise and conversational, suitable for a real-time phone call. "
+                    "Your goal is to provide accurate information quickly and naturally."
+                )
+                messages = [{"role": "system", "content": system_prompt}]
+                messages.extend(conversation_history)
+                messages.append({"role": "user", "content": transcript})
+                
+                logger.info(f"[{call_sid}] Sending transcript to LLM...")
+                chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
+                llm_response_text = chat_completion.choices[0].message.content
+                logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
 
-            # 3. Update conversation history in Redis
-            conversation_history.append({"role": "user", "content": transcript})
-            conversation_history.append({"role": "assistant", "content": llm_response_text})
-            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
+                # 3. Update conversation history in Redis
+                conversation_history.append({"role": "user", "content": transcript})
+                conversation_history.append({"role": "assistant", "content": llm_response_text})
+                redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             # 4. Generate TTS audio as mu-law bytes and send to SignalWire
             if llm_response_text:
@@ -232,6 +231,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start']['streamSid']
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+                # Play the welcome message now that the stream is officially started
+                asyncio.create_task(process_and_respond("Welcome", is_welcome_message=True))
             elif event == 'media':
                 payload = base64.b64decode(message['media']['payload'])
                 if payload:
