@@ -136,15 +136,16 @@ async def handle_incoming_call(request: Request):
     logger.info(f"📞 INCOMING CALL [{call_sid}]: Received request from SignalWire. Body: {body}")
     
     response = VoiceResponse()
-    response.say("Hello! Please wait a moment while I connect you to the AI agent.")
     
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
-    # Use the <Start> and <Stream> verbs to start sending audio to our WebSocket,
-    # following the official documentation's append pattern.
+    # Start the stream first to ensure we capture audio from the beginning of the call.
     start = Start()
     start.append(Stream(url=websocket_url))
     response.append(start)
+
+    # Now, play the welcome message using a high-quality neural voice.
+    response.say("Hello! Please wait a moment while I connect you to the AI agent.", voice="Polly.Joanna-Neural")
     
     # This pause is crucial. It keeps the cXML document "running" and the call active
     # while the WebSocket is streaming. The conversation happens in the stream.
