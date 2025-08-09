@@ -112,42 +112,21 @@ async def root():
 
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request):
-    """Responds with cXML to start a non-blocking stream with status callbacks, say a welcome message, and pause."""
+    """Responds with cXML to connect the call to our WebSocket for bidirectional streaming."""
     body = await request.form()
     call_sid = body.get("CallSid")
     logger.info(f"📞 INCOMING CALL [{call_sid}]: From: {body.get('From', 'N/A')}, To: {body.get('To', 'N/A')}")
     
     response = VoiceResponse()
     
-    # 1. Start the media stream in the background with status callbacks for visibility
+    # As per documentation, use <Connect><Stream> for a bidirectional stream.
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
-    status_callback_url = f"{RENDER_EXTERNAL_URL}/stream_status"
+    connect = Connect()
+    connect.stream(url=websocket_url)
+    response.append(connect)
     
-    start = response.start()
-    start.stream(url=websocket_url, status_callback=status_callback_url, status_callback_method="POST")
-    logger.info(f"[{call_sid}] Enqueued <Start><Stream> to {websocket_url} with status callback to {status_callback_url}.")
-
-    # 2. Immediately after, enqueue the welcome message
-    welcome_text = "Welcome to the voice assistant. Please wait a moment while we connect you."
-    response.say(welcome_text, voice="en-US-Standard-A")
-    logger.info(f"[{call_sid}] Enqueued <Say> verb for welcome message.")
-
-    # 3. Add a long pause to keep the call alive, allowing the stream to connect.
-    response.pause(length=30)
-    logger.info(f"[{call_sid}] Enqueued <Pause length=30> to prevent premature hangup.")
-    
-    logger.info(f"[{call_sid}] Responding with cXML for stabilized call handoff.")
+    logger.info(f"[{call_sid}] Responding with cXML to <Connect> to WebSocket: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
-
-@app.post("/stream_status")
-async def handle_stream_status(request: Request):
-    """Receives and logs status updates for the WebSocket stream."""
-    body = await request.form()
-    call_sid = body.get("CallSid")
-    stream_sid = body.get("StreamSid")
-    event = body.get("StreamEvent")
-    logger.info(f"STREAM STATUS [{call_sid}][{stream_sid}]: Event: {event}. Full data: {body}")
-    return Response(status_code=200)
 
 @app.websocket("/media/{call_sid}")
 async def media_websocket_handler(websocket: WebSocket, call_sid: str):
@@ -157,31 +136,35 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     dg_connection = deepgram_client.listen.asynclive.v("1")
 
-    async def process_and_respond(transcript: str):
+    async def process_and_respond(transcript: str, is_welcome_message: bool = False):
         logger.info(f"[{call_sid}] PROCESSING transcript: '{transcript}'")
         redis_key = f"conversation:{call_sid}"
         
         try:
-            history_json = redis_client.get(redis_key)
-            conversation_history = json.loads(history_json) if history_json else []
-            
-            system_prompt = (
-                "You are a highly responsive, friendly, and human-like voice assistant. "
-                "Keep your responses concise and conversational, suitable for a real-time phone call. "
-                "Your goal is to provide accurate information quickly and naturally."
-            )
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(conversation_history)
-            messages.append({"role": "user", "content": transcript})
-            
-            logger.info(f"[{call_sid}] Sending transcript to LLM...")
-            chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-            llm_response_text = chat_completion.choices[0].message.content
-            logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
+            if is_welcome_message:
+                llm_response_text = "Welcome to the voice assistant. How can I help you today?"
+                logger.info(f"[{call_sid}] Using static welcome message.")
+            else:
+                history_json = redis_client.get(redis_key)
+                conversation_history = json.loads(history_json) if history_json else []
+                
+                system_prompt = (
+                    "You are a highly responsive, friendly, and human-like voice assistant. "
+                    "Keep your responses concise and conversational, suitable for a real-time phone call. "
+                    "Your goal is to provide accurate information quickly and naturally."
+                )
+                messages = [{"role": "system", "content": system_prompt}]
+                messages.extend(conversation_history)
+                messages.append({"role": "user", "content": transcript})
+                
+                logger.info(f"[{call_sid}] Sending transcript to LLM...")
+                chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
+                llm_response_text = chat_completion.choices[0].message.content
+                logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
 
-            conversation_history.append({"role": "user", "content": transcript})
-            conversation_history.append({"role": "assistant", "content": llm_response_text})
-            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
+                conversation_history.append({"role": "user", "content": transcript})
+                conversation_history.append({"role": "assistant", "content": llm_response_text})
+                redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             if llm_response_text:
                 audio_bytes = await generate_tts_mulaw_bytes_for_stream(llm_response_text, call_sid)
@@ -225,9 +208,13 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             message = json.loads(message_str)
             event = message.get('event')
             
-            if event == 'start':
+            if event == 'connected':
+                logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
+            elif event == 'start':
                 stream_sid = message['start']['streamSid']
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+                # Play the welcome message now that the stream is officially started
+                asyncio.create_task(process_and_respond("Welcome", is_welcome_message=True))
             elif event == 'media':
                 payload = base64.b64decode(message['media']['payload'])
                 if payload:
