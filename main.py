@@ -133,7 +133,7 @@ async def handle_incoming_call(request: Request):
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
     start = Start()
-    start.stream(url=websocket_url, track='both_tracks')
+    start.stream(url=websocket_url, track='inbound_track')
     response.append(start)
 
     response.say(
