@@ -28,7 +28,7 @@ DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_SPACE_URL = os.environ.get("SIGNALWIRE_SPACE_URL")
-RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
+PUBLIC_URL_BASE = os.environ.get("PUBLIC_URL_BASE")
 
 TELEPHONY_CODEC = "pcm_mulaw"
 OPTIMIZED_AUDIO_DIR = "public_audio"
@@ -136,7 +136,7 @@ async def handle_incoming_call(request: Request):
     response = VoiceResponse()
     
     # Use Connect + Stream (bidirectional). track both_tracks or default based on SignalWire support.
-    websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
+    websocket_url = f"wss://{PUBLIC_URL_BASE.replace('https://', '')}/media/{call_sid}"
     connect = Connect()
     # keep track param as per your SignalWire support; 'both_tracks' was used earlier
     connect.stream(url=websocket_url, track='both_tracks')
