@@ -181,28 +181,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             logger.info(f"[{call_sid}] Sending transcript to LLM...")
             # run blocking SDK call in thread to avoid blocking event loop
             chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-            ll
-                history_json = redis_client.get(redis_key)
-                conversation_history = json.loads(history_json) if history_json else []
-                
-                system_prompt = (
-                    "You are a highly responsive, friendly, and human-like voice assistant. "
-                    "Keep your responses concise and conversational, suitable for a real-time phone call. "
-                    "Your goal is to provide accurate information quickly and naturally."
-                )
-                messages = [{"role": "system", "content": system_prompt}]
-                messages.extend(conversation_history)
-                messages.append({"role": "user", "content": transcript})
-                
-                logger.info(f"[{call_sid}] Sending transcript to LLM...")
-                # run blocking SDK call in thread to avoid blocking event loop
-                chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-                llm_response_text = chat_completion.choices[0].message.content
-                logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
+            llm_response_text = chat_completion.choices[0].message.content
+            logger.info(f"[{call_sid}] LLM generated response: '{llm_response_text[:50]}...'")
 
-                conversation_history.append({"role": "user", "content": transcript})
-                conversation_history.append({"role": "assistant", "content": llm_response_text})
-                redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
+            conversation_history.append({"role": "user", "content": transcript})
+            conversation_history.append({"role": "assistant", "content": llm_response_text})
+            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             if llm_response_text:
                 # produce TTS and stream it as a background task so we don't block inbound audio handling
@@ -246,7 +230,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         if transcript and speech_final:
             logger.info(f"[{call_sid}] Deepgram speech_final received: '{transcript}'")
             # spawn processing of transcript (non-blocking)
-            asyncio.create_task(process_and_respond(transcript, stream_sid, is_welcome_message=False))
+            asyncio.create_task(process_and_respond(transcript, stream_sid))
 
     async def on_error(error, **kwargs):
         logger.error(f"[{call_sid}] Deepgram connection error: {error}", exc_info=True)
