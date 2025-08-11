@@ -269,7 +269,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 smart_format=True,
                 interim_results=False,
                 vad_events=True,
-                endpointing=600
+                endpointing=600,
+                multichannel=True  # CRITICAL FIX: Tell Deepgram to process stereo audio
             )
             logger.info(f"[{call_sid}] [BLACKBOX] Successfully connected to Deepgram. Setting dg_ready event.")
             dg_ready.set()
