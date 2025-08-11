@@ -9,7 +9,7 @@ from fastapi import FastAPI, WebSocket, Response, Request, BackgroundTasks, HTTP
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from dotenv import load_dotenv
-from signalwire.voice_response import VoiceResponse, Connect, Stream, Play
+from signalwire.voice_response import VoiceResponse, Connect, Stream, Play, Start
 from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 import redis
 import aiofiles
@@ -135,14 +135,23 @@ async def handle_incoming_call(request: Request):
     
     response = VoiceResponse()
     
-    # Use Connect + Stream (bidirectional). track both_tracks or default based on SignalWire support.
+    # Use the stable, non-blocking handoff architecture to survive Render's cold starts.
     websocket_url = f"wss://{PUBLIC_URL_BASE.replace('https://', '')}/media/{call_sid}"
-    connect = Connect()
-    # keep track param as per your SignalWire support; 'both_tracks' was used earlier
-    connect.stream(url=websocket_url, track='both_tracks')
-    response.append(connect)
     
-    logger.info(f"[{call_sid}] Responding with cXML to <Connect> to WebSocket: {websocket_url}")
+    start = Start()
+    start.stream(url=websocket_url, track='both_tracks')
+    response.append(start)
+
+    # Play a welcome message using native TTS to keep the call active.
+    response.say(
+        "Welcome, please wait a moment while I connect you.",
+        voice="en-US-Standard-A"
+    )
+
+    # Pause to keep the line open, giving the WebSocket time to establish.
+    response.pause(length=60)
+    
+    logger.info(f"[{call_sid}] Responding with resilient cXML (<Start><Stream>, <Say>, <Pause>) to URL: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -297,9 +306,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start'].get('streamSid') if message.get('start') else None
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
-                # If you still want a server-side static welcome, you can do it here.
-                # But if you used cXML native Say, it's not required. If you want, uncomment:
-                # asyncio.create_task(process_and_respond("Welcome", stream_sid, is_welcome_message=True))
+                # The welcome message is now handled by the initial cXML <Say> verb.
+                # No action is needed here; we just wait for user audio.
             elif event == 'media':
                 # Incoming caller/callee audio frames
                 media = message.get('media', {})
