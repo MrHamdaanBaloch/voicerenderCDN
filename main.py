@@ -324,6 +324,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'media':
                 # Incoming caller/callee audio frames
                 media = message.get('media', {})
+                
+                # CRITICAL FIX: Only process the inbound track (audio from the user)
+                if media.get('track') != 'inbound':
+                    logger.info(f"[{call_sid}] [BLACKBOX] Ignoring outbound media frame.")
+                    continue
+
                 payload_b64 = media.get('payload')
                 if not payload_b64:
                     continue
