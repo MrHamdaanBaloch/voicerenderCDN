@@ -28,7 +28,7 @@ DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
 SIGNALWIRE_SPACE_URL = os.environ.get("SIGNALWIRE_SPACE_URL")
-PUBLIC_URL_BASE = os.environ.get("PUBLIC_URL_BASE")
+RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 TELEPHONY_CODEC = "pcm_mulaw"
 OPTIMIZED_AUDIO_DIR = "public_audio"
@@ -133,10 +133,14 @@ async def handle_incoming_call(request: Request):
     call_sid = body.get("CallSid")
     logger.info(f"📞 INCOMING CALL [{call_sid}]: From: {body.get('From', 'N/A')}, To: {body.get('To', 'N/A')}")
     
+    if not RENDER_EXTERNAL_URL:
+        logger.critical("CRITICAL ERROR: RENDER_EXTERNAL_URL environment variable not set. Cannot process calls.")
+        raise HTTPException(status_code=503, detail="Service Unavailable: Critical configuration is missing.")
+
     response = VoiceResponse()
     
     # Use the stable, non-blocking handoff architecture to survive Render's cold starts.
-    websocket_url = f"wss://{PUBLIC_URL_BASE.replace('https://', '')}/media/{call_sid}"
+    websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
     start = Start()
     start.stream(url=websocket_url, track='both_tracks')
