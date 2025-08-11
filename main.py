@@ -285,26 +285,10 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         except Exception as e:
             logger.exception(f"[{call_sid}] [BLACKBOX] Failed to start Deepgram: {e}")
 
-    # Keep Deepgram alive during silences by sending short silence periodically
-    async def deepgram_keepalive_task():
-        SILENCE_FRAME = bytes([0xFF] * 160)  # 20ms mu-law silence @ 8kHz
-        try:
-            while not stop_keepalive.is_set():
-                if dg_ready.is_set():
-                    try:
-                        await dg_connection.send(SILENCE_FRAME)
-                        logger.info(f"[{call_sid}] [BLACKBOX] Sent keepalive frame to Deepgram.")
-                    except Exception as e:
-                        logger.debug(f"[{call_sid}] [BLACKBOX] keepalive send error: {e}")
-                await asyncio.sleep(2.0)
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            logger.exception(f"[{call_sid}] [BLACKBOX] keepalive task exception")
-
     # launch background tasks
     dg_start_task = asyncio.create_task(start_deepgram_and_flush())
-    keepalive_task = asyncio.create_task(deepgram_keepalive_task())
+    # The keepalive is now handled automatically by the Deepgram SDK's `options={"keepalive": "true"}` setting.
+    # The manual keepalive task is no longer needed and has been removed.
 
     try:
         # Main loop: receive SignalWire events
@@ -363,8 +347,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     except Exception as e:
         logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
     finally:
-        logger.info(f"[{call_sid}] Cleaning up: stopping keepalive and finishing Deepgram connection.")
-        stop_keepalive.set()
+        logger.info(f"[{call_sid}] Cleaning up: finishing Deepgram connection.")
         try:
             # wait a short moment for background tasks to wind down
             await asyncio.sleep(0.1)
