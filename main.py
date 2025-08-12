@@ -16,7 +16,7 @@ import aiofiles
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("VoiceAgentService")
 
 # --- FastAPI App Setup ---
@@ -136,14 +136,11 @@ async def handle_incoming_call(request: Request):
     start.stream(url=websocket_url, track='inbound_track')
     response.append(start)
 
-    response.say(
-        "Welcome, please wait a moment while I connect you.",
-        voice="en-US-Standard-A"
-    )
-
-    response.pause(length=60)
+    # The agent will now handle the welcome message and keep the call alive.
+    # A short pause can be useful to prevent instant hangup if the WebSocket connection fails.
+    response.pause(length=5)
     
-    logger.info(f"[{call_sid}] Responding with resilient cXML (<Start><Stream>, <Say>, <Pause>) to URL: {websocket_url}")
+    logger.info(f"[{call_sid}] Responding with cXML (<Start><Stream>) to URL: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -214,6 +211,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         speech_final = getattr(result, "speech_final", False) or getattr(result, "is_final", False)
 
         if transcript and speech_final:
+            if not stream_sid:
+                logger.warning(f"[{call_sid}] Received final transcript but stream_sid is not yet set. Discarding.")
+                return
             logger.info(f"[{call_sid}] Deepgram speech_final received: '{transcript}'")
             asyncio.create_task(process_and_respond(transcript, stream_sid))
 
@@ -256,6 +256,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start'].get('streamSid') if message.get('start') else None
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+                # You mentioned you added a welcome message here, which is great.
+                # This task will run in the background.
+                asyncio.create_task(produce_and_stream_tts("Hello! How can I help you today?"))
             elif event == 'media':
                 media = message.get('media', {})
                 track = media.get('track')
@@ -263,6 +266,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
                 if not payload_b64 or track != 'inbound':
                     continue
+
+                logger.debug(f"[{call_sid}] [BLACKBOX] SignalWire sent inbound audio chunk.")
                 
                 try:
                     payload = base64.b64decode(payload_b64)
@@ -274,6 +279,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     inbound_buffer.append(payload)
                 else:
                     await dg_inbound.send(payload)
+                    logger.debug(f"[{call_sid}] [BLACKBOX] Forwarded audio chunk to Deepgram.")
+
             elif event == 'stop':
                 logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
                 break
