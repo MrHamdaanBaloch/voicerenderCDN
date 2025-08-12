@@ -16,7 +16,7 @@ import aiofiles
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("VoiceAgentService")
 
 # --- FastAPI App Setup ---
@@ -146,6 +146,7 @@ async def handle_incoming_call(request: Request):
 @app.websocket("/media/{call_sid}")
 async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     """Handles the bidirectional audio stream between SignalWire and Deepgram."""
+    logger.info(f"!!!!!! WebSocket HANDLER ENTRY for call {call_sid}")
     await websocket.accept()
     logger.info(f"🎙️ [BLACKBOX] WebSocket connection accepted for call {call_sid}")
 
