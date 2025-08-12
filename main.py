@@ -258,18 +258,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start'].get('streamSid') if message.get('start') else None
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
-
-                # Wait for Deepgram to be ready before sending the welcome message.
-                # This prevents a race condition where we try to speak before we can listen.
-                async def welcome_after_ready(sid):
-                    await dg_inbound_ready.wait()
-                    logger.info(f"[{call_sid}] Deepgram is ready. Sending welcome message.")
-                    welcome_text = "Welcome, how can I help you today?"
-                    # Use await here to ensure it completes, but the function itself is tasked.
-                    await produce_and_stream_tts(welcome_text, sid)
-
-                if stream_sid:
-                    asyncio.create_task(welcome_after_ready(stream_sid))
+                # No welcome message will be played. The agent will wait for the user to speak.
             elif event == 'media':
                 media = message.get('media', {})
                 track = media.get('track')
