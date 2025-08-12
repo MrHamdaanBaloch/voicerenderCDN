@@ -155,6 +155,16 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     dg_inbound_ready = asyncio.Event()
     stream_sid = None
 
+    async def produce_and_stream_tts(text_to_speak: str, stream_sid_local: str):
+        """Helper function to generate and stream TTS audio."""
+        try:
+            logger.info(f"[{call_sid}] [BLACKBOX] Starting TTS generation task for text: '{text_to_speak[:30]}...'")
+            audio_bytes = await generate_tts_mulaw_bytes_for_stream(text_to_speak, call_sid)
+            await send_audio_payload_chunked(websocket, stream_sid_local, audio_bytes, call_sid=call_sid)
+            logger.info(f"[{call_sid}] [BLACKBOX] TTS streaming task completed.")
+        except Exception as e:
+            logger.exception(f"[{call_sid}] [BLACKBOX] Error in produce_and_stream_tts: {e}")
+
     async def process_and_respond(transcript: str, stream_sid_local: str):
         logger.info(f"[{call_sid}] [BLACKBOX] Starting process_and_respond for transcript: '{transcript}'")
         redis_key = f"conversation:{call_sid}"
@@ -182,16 +192,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             if llm_response_text:
-                async def produce_and_stream_tts(text_to_speak: str):
-                    try:
-                        logger.info(f"[{call_sid}] [BLACKBOX] Starting TTS generation task.")
-                        audio_bytes = await generate_tts_mulaw_bytes_for_stream(text_to_speak, call_sid)
-                        await send_audio_payload_chunked(websocket, stream_sid_local, audio_bytes, call_sid=call_sid)
-                        logger.info(f"[{call_sid}] [BLACKBOX] TTS streaming task completed.")
-                    except Exception as e:
-                        logger.exception(f"[{call_sid}] [BLACKBOX] Error in produce_and_stream_tts: {e}")
-
-                asyncio.create_task(produce_and_stream_tts(llm_response_text))
+                asyncio.create_task(produce_and_stream_tts(llm_response_text, stream_sid_local))
 
         except Exception as e:
             logger.error(f"[{call_sid}] [BLACKBOX] An error occurred in process_and_respond.", exc_info=True)
@@ -256,9 +257,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start'].get('streamSid') if message.get('start') else None
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
-                # You mentioned you added a welcome message here, which is great.
-                # This task will run in the background.
-                asyncio.create_task(produce_and_stream_tts("Hello! How can I help you today?"))
+
+                # Agent takes control: send welcome message now that the stream is confirmed.
+                if stream_sid:
+                    welcome_text = "Welcome, how can I help you today?"
+                    asyncio.create_task(produce_and_stream_tts(welcome_text, stream_sid))
             elif event == 'media':
                 media = message.get('media', {})
                 track = media.get('track')
