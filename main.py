@@ -136,11 +136,11 @@ async def handle_incoming_call(request: Request):
     start.stream(url=websocket_url, track='inbound_track')
     response.append(start)
 
-    # The agent will now handle the welcome message and keep the call alive.
-    # A short pause can be useful to prevent instant hangup if the WebSocket connection fails.
-    response.pause(length=5)
+    # A long pause is crucial to keep the call alive while the WebSocket connects
+    # and the agent takes control. The agent's logic will supersede this.
+    response.pause(length=60)
     
-    logger.info(f"[{call_sid}] Responding with cXML (<Start><Stream>) to URL: {websocket_url}")
+    logger.info(f"[{call_sid}] Responding with resilient cXML (<Start><Stream>, <Pause>) to URL: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
