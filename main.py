@@ -155,6 +155,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     inbound_buffer = []
     dg_inbound_ready = asyncio.Event()
     stream_sid = None
+    audio_dump_file = None
 
     async def produce_and_stream_tts(text_to_speak: str, stream_sid_local: str):
         """Helper function to generate and stream TTS audio."""
@@ -250,13 +251,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     dg_start_task = asyncio.create_task(start_deepgram_connection())
 
-    try:
-        while True:
-            message_str = await websocket.receive_text()
+    async for message_str in websocket:
+        try:
             message = json.loads(message_str)
             event = message.get('event')
             
-            # This log is too verbose for production, moved to DEBUG level.
             logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
 
             if event == 'connected':
@@ -264,7 +263,14 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             elif event == 'start':
                 stream_sid = message['start'].get('streamSid') if message.get('start') else None
                 logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
-                # No welcome message will be played. The agent will wait for the user to speak.
+                
+                # Feature: Audio Dumping for Debugging
+                try:
+                    filepath = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
+                    audio_dump_file = open(filepath, 'wb')
+                    logger.info(f"[{call_sid}] [AUDIO_DUMP] Dumping inbound audio to {filepath}")
+                except Exception as e:
+                    logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to open dump file: {e}")
             elif event == 'media':
                 media = message.get('media', {})
                 track = media.get('track')
@@ -275,6 +281,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 
                 try:
                     payload = base64.b64decode(payload_b64)
+                    if audio_dump_file:
+                        audio_dump_file.write(payload)
                 except Exception:
                     logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
                     continue
@@ -289,10 +297,13 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 break
             else:
                 logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {json.dumps(message)}")
-    
-    except Exception as e:
-        logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
+        except Exception as e:
+            logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
+            break
     finally:
+        if audio_dump_file:
+            logger.info(f"[{call_sid}] [AUDIO_DUMP] Closing audio dump file.")
+            audio_dump_file.close()
         logger.info(f"[{call_sid}] Cleaning up: finishing Deepgram connection.")
         try:
             await asyncio.sleep(0.1)
