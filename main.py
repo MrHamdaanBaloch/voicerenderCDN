@@ -183,16 +183,17 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             messages.extend(conversation_history)
             messages.append({"role": "user", "content": transcript})
             
-            logger.info(f"[{call_sid}] [BLACKBOX] Sending transcript to LLM...")
+            logger.info(f"[{call_sid}] [LLM_TRACE] Sending transcript to LLM...")
             chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
             llm_response_text = chat_completion.choices[0].message.content
-            logger.info(f"[{call_sid}] [BLACKBOX] LLM generated response: '{llm_response_text[:50]}...'")
+            logger.info(f"[{call_sid}] [LLM_TRACE] LLM generated response: '{llm_response_text[:50]}...'")
 
             conversation_history.append({"role": "user", "content": transcript})
             conversation_history.append({"role": "assistant", "content": llm_response_text})
             redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             if llm_response_text:
+                logger.info(f"[{call_sid}] [TTS_TRACE] Creating TTS task for response.")
                 asyncio.create_task(produce_and_stream_tts(llm_response_text, stream_sid_local))
 
         except Exception as e:
@@ -201,8 +202,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         logger.info(f"[{call_sid}] [BLACKBOX] FINISHED processing transcript: '{transcript}'")
 
     async def on_message(result, **kwargs):
-        logger.info(f"[{call_sid}] Deepgram RAW message: {str(result)}")
+        logger.debug(f"[{call_sid}] Deepgram RAW message: {str(result)}")
         try:
+            logger.info(f"[{call_sid}] [DEEPGRAM_TRACE] Received a message from Deepgram.")
             transcript = result.channel.alternatives[0].transcript.strip()
             if not transcript:
                 return
@@ -254,7 +256,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             message = json.loads(message_str)
             event = message.get('event')
             
-            logger.info(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
+            # This log is too verbose for production, moved to DEBUG level.
+            logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
 
             if event == 'connected':
                 logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
