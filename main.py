@@ -227,21 +227,24 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     async def start_deepgram_connection():
         try:
-            logger.info(f"[{call_sid}] [BLACKBOX] Starting Deepgram connection...")
+            logger.info(f"[{call_sid}] [BLACKBOX] Attempting to start Deepgram connection...")
             await dg_inbound.start(
                 model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000,
                 punctuate=True, smart_format=True, interim_results=False, vad_events=True, endpointing=600
             )
-            logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection ready. Setting event.")
+            logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection STARTED successfully.")
+            
             dg_inbound_ready.set()
+            logger.info(f"[{call_sid}] [BLACKBOX] Deepgram ready event SET.")
             
             logger.info(f"[{call_sid}] [BLACKBOX] Flushing {len(inbound_buffer)} buffered frames to Deepgram.")
             for chunk in inbound_buffer:
                 await dg_inbound.send(chunk)
             inbound_buffer.clear()
+            logger.info(f"[{call_sid}] [BLACKBOX] Buffer flushed. Deepgram startup task complete.")
 
         except Exception as e:
-            logger.exception(f"[{call_sid}] [BLACKBOX] Failed to start Deepgram connection: {e}")
+            logger.critical(f"[{call_sid}] [BLACKBOX] CRITICAL ERROR during Deepgram start: {e}", exc_info=True)
 
     dg_start_task = asyncio.create_task(start_deepgram_connection())
 
