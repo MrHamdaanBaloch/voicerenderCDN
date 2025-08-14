@@ -232,7 +232,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             logger.info(f"[{call_sid}] [BLACKBOX] Attempting to start Deepgram connection...")
             await dg_inbound.start(
                 model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000,
-                punctuate=True, smart_format=True, interim_results=False, vad_events=True, endpointing=600
+                punctuate=True, smart_format=True, interim_results=True, vad_events=True, endpointing=600
             )
             logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection STARTED successfully.")
             
@@ -278,15 +278,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 except Exception:
                     logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
                     continue
-
-                # Feature: Silence Detection Heuristic
-                is_silence = len(payload) > 0 and all(b == payload[0] for b in payload)
-                log_prefix = "[AUDIO_TRACE]"
-                if is_silence:
-                    # Use DEBUG level for silence to avoid cluttering logs
-                    logger.debug(f"[{call_sid}] {log_prefix} Received a chunk of apparent silence.")
-                else:
-                    logger.info(f"[{call_sid}] {log_prefix} Received a chunk of potential speech.")
 
                 if not dg_inbound_ready.is_set():
                     inbound_buffer.append(payload)
