@@ -272,8 +272,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
                 if not payload_b64 or track != 'inbound':
                     continue
-
-                logger.debug(f"[{call_sid}] [BLACKBOX] SignalWire sent inbound audio chunk.")
                 
                 try:
                     payload = base64.b64decode(payload_b64)
@@ -281,11 +279,19 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
                     continue
 
+                # Feature: Silence Detection Heuristic
+                is_silence = len(payload) > 0 and all(b == payload[0] for b in payload)
+                log_prefix = "[AUDIO_TRACE]"
+                if is_silence:
+                    # Use DEBUG level for silence to avoid cluttering logs
+                    logger.debug(f"[{call_sid}] {log_prefix} Received a chunk of apparent silence.")
+                else:
+                    logger.info(f"[{call_sid}] {log_prefix} Received a chunk of potential speech.")
+
                 if not dg_inbound_ready.is_set():
                     inbound_buffer.append(payload)
                 else:
                     await dg_inbound.send(payload)
-                    logger.debug(f"[{call_sid}] [BLACKBOX] Forwarded audio chunk to Deepgram.")
 
             elif event == 'stop':
                 logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
