@@ -6,6 +6,7 @@ import random
 import uuid
 import base64
 from fastapi import FastAPI, WebSocket, Response, Request, BackgroundTasks, HTTPException
+from starlette.websockets import WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from groq import Groq
 from dotenv import load_dotenv
@@ -95,7 +96,7 @@ def cleanup_file(path: str):
     except Exception as e:
         logger.warning(f"Failed to cleanup file {path}: {e}")
 
-async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None):
+async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None, user_is_speaking_event: asyncio.Event = None):
     """
     Send mu-law outbound audio to SignalWire as many small frames to mimic real-time.
     """
@@ -107,6 +108,9 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
     chunk_count = 0
     try:
         while pos < total:
+            if user_is_speaking_event and user_is_speaking_event.is_set():
+                logger.info(f"[{call_sid}] [BARGE-IN] User started speaking. Interrupting TTS playback.")
+                break
             chunk_count += 1
             chunk = audio_bytes[pos:pos + frame_size]
             payload = base64.b64encode(chunk).decode("utf-8")
@@ -119,8 +123,10 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
             pos += frame_size
             await asyncio.sleep(frame_ms / 1000.0)
         logger.info(f"[{call_sid}] [BLACKBOX] Finished streaming {chunk_count} chunks.")
+    except WebSocketDisconnect:
+        logger.info(f"[{call_sid}] [BLACKBOX] Client disconnected during audio streaming. Halting.")
     except Exception as e:
-        logger.exception(f"[{call_sid}] [BLACKBOX] Error while streaming outbound audio chunks: {e}")
+        logger.exception(f"[{call_sid}] [BLACKBOX] Unexpected error while streaming outbound audio chunks: {e}")
 
 # --- FastAPI Endpoints ---
 
@@ -147,11 +153,10 @@ async def handle_incoming_call(request: Request):
     start.stream(url=websocket_url, track='inbound_track')
     response.append(start)
 
-    # A long pause is crucial to keep the call alive while the WebSocket connects
-    # and the agent takes control. The agent's logic will supersede this.
-    response.pause(length=60)
+    # The pause is removed to allow immediate streaming without any delay.
+    # response.pause(length=60)
     
-    logger.info(f"[{call_sid}] Responding with resilient cXML (<Start><Stream>, <Pause>) to URL: {websocket_url}")
+    logger.info(f"[{call_sid}] Responding with cXML (<Start><Stream>) to URL: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -166,6 +171,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     inbound_buffer = []
     dg_inbound_ready = asyncio.Event()
     stream_sid = None
+    final_transcript_parts = []
+    user_is_speaking_event = asyncio.Event()
     # Removed audio_dump_file, will use Redis instead
 
     async def produce_and_stream_tts(text_to_speak: str, stream_sid_local: str):
@@ -173,7 +180,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         try:
             logger.info(f"[{call_sid}] [BLACKBOX] Starting TTS generation task for text: '{text_to_speak[:30]}...'")
             audio_bytes = await generate_tts_mulaw_bytes_for_stream(text_to_speak, call_sid)
-            await send_audio_payload_chunked(websocket, stream_sid_local, audio_bytes, call_sid=call_sid)
+            await send_audio_payload_chunked(websocket, stream_sid_local, audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
             logger.info(f"[{call_sid}] [BLACKBOX] TTS streaming task completed.")
         except Exception as e:
             logger.exception(f"[{call_sid}] [BLACKBOX] Error in produce_and_stream_tts: {e}")
@@ -205,6 +212,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
 
             if llm_response_text:
+                user_is_speaking_event.clear()
+                logger.info(f"[{call_sid}] [BARGE-IN] Cleared user speaking event before generating new response.")
                 logger.info(f"[{call_sid}] [TTS_TRACE] Creating TTS task for response.")
                 asyncio.create_task(produce_and_stream_tts(llm_response_text, stream_sid_local))
 
@@ -216,27 +225,33 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     async def on_message(result, **kwargs):
         logger.debug(f"[{call_sid}] Deepgram RAW message: {str(result)}")
         try:
-            logger.info(f"[{call_sid}] [DEEPGRAM_TRACE] Received a message from Deepgram.")
             transcript = result.channel.alternatives[0].transcript.strip()
             if not transcript:
                 return
         except Exception:
-            logger.exception(f"[{call_sid}] Error parsing Deepgram result.")
+            # This can happen on interim results, it's not a critical error.
             return
 
         speech_final = getattr(result, "speech_final", False) or getattr(result, "is_final", False)
 
         if transcript and speech_final:
-            if not stream_sid:
-                logger.warning(f"[{call_sid}] Received final transcript but stream_sid is not yet set. Discarding.")
-                return
-            logger.info(f"[{call_sid}] Deepgram speech_final received: '{transcript}'")
-            asyncio.create_task(process_and_respond(transcript, stream_sid))
+            logger.info(f"[{call_sid}] Deepgram speech_final fragment received: '{transcript}'")
+            final_transcript_parts.append(transcript)
+
+    async def on_utterance_end(result, **kwargs):
+        logger.info(f"[{call_sid}] Deepgram UtteranceEnd received.")
+        if stream_sid and final_transcript_parts:
+            full_sentence = " ".join(final_transcript_parts).strip()
+            logger.info(f"[{call_sid}] Processing complete utterance: '{full_sentence}'")
+            if full_sentence:
+                asyncio.create_task(process_and_respond(full_sentence, stream_sid))
+            final_transcript_parts.clear()
 
     async def on_error(error, **kwargs):
         logger.error(f"[{call_sid}] Deepgram connection error: {error}", exc_info=True)
 
     dg_inbound.on(LiveTranscriptionEvents.Transcript, on_message)
+    dg_inbound.on(LiveTranscriptionEvents.UtteranceEnd, on_utterance_end)
     dg_inbound.on(LiveTranscriptionEvents.Error, on_error)
 
     async def start_deepgram_connection():
@@ -244,7 +259,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             logger.info(f"[{call_sid}] [BLACKBOX] Attempting to start Deepgram connection...")
             await dg_inbound.start(
                 model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000,
-                punctuate=True, smart_format=True, interim_results=True, vad_events=True, endpointing=600
+                punctuate=True, smart_format=True, interim_results=True, vad_events=True, endpointing=600,
+                utterance_end_ms="1000"
             )
             logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection STARTED successfully.")
             
@@ -264,8 +280,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     try:
         while True:
-            message_str = await websocket.receive_text()
             try:
+                message_str = await websocket.receive_text()
                 message = json.loads(message_str)
                 event = message.get('event')
 
@@ -277,11 +293,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     stream_sid = message['start'].get('streamSid') if message.get('start') else None
                     logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
 
-                    # --- Greet the caller immediately to keep the connection alive ---
-                    if stream_sid:
-                        logger.info(f"[{call_sid}] [TTS_TRACE] Creating welcome message task.")
-                        welcome_text = "Hello! Welcome to the voice assistant. How can I help you today?"
-                        asyncio.create_task(produce_and_stream_tts(welcome_text, stream_sid))
+                    # Welcome message has been removed as per your request.
                     
                     # Feature: Audio Dumping for Debugging (now using Redis)
                     redis_key = f"audio_dump:{call_sid}"
@@ -296,25 +308,30 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     if not payload_b64 or track != 'inbound':
                         continue
                     
+                    # Decode the mu-law audio from base64
+                    audio_bytes = base64.b64decode(payload_b64)
+
+                    # Save the raw audio chunk to a file for debugging
                     try:
-                        payload = base64.b64decode(payload_b64)
-                        # Append to Redis instead of a file
-                        redis_key = f"audio_dump:{call_sid}"
-                        redis_client.append(redis_key, payload)
-                    except Exception:
-                        logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
-                        continue
+                        debug_audio_path = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
+                        async with aiofiles.open(debug_audio_path, 'ab') as f:
+                            await f.write(audio_bytes)
+                    except Exception as e:
+                        logger.error(f"[{call_sid}] Failed to write to debug audio file: {e}")
 
-                    if not dg_inbound_ready.is_set():
-                        inbound_buffer.append(payload)
+                    # Send audio to Deepgram
+                    if dg_inbound_ready.is_set():
+                        await dg_inbound.send(audio_bytes)
                     else:
-                        await dg_inbound.send(payload)
-
+                        inbound_buffer.append(payload)
                 elif event == 'stop':
                     logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
                     break
                 else:
                     logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {json.dumps(message)}")
+            except WebSocketDisconnect:
+                logger.info(f"[{call_sid}] SignalWire WebSocket disconnected gracefully.")
+                break
             except Exception as e:
                 logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
                 break
