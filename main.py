@@ -253,54 +253,54 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     try:
         async for message_str in websocket:
-        try:
-            message = json.loads(message_str)
-            event = message.get('event')
-            
-            logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
-
-            if event == 'connected':
-                logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
-            elif event == 'start':
-                stream_sid = message['start'].get('streamSid') if message.get('start') else None
-                logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+            try:
+                message = json.loads(message_str)
+                event = message.get('event')
                 
-                # Feature: Audio Dumping for Debugging
-                try:
-                    filepath = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
-                    audio_dump_file = open(filepath, 'wb')
-                    logger.info(f"[{call_sid}] [AUDIO_DUMP] Dumping inbound audio to {filepath}")
-                except Exception as e:
-                    logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to open dump file: {e}")
-            elif event == 'media':
-                media = message.get('media', {})
-                track = media.get('track')
-                payload_b64 = media.get('payload')
+                logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
 
-                if not payload_b64 or track != 'inbound':
-                    continue
-                
-                try:
-                    payload = base64.b64decode(payload_b64)
-                    if audio_dump_file:
-                        audio_dump_file.write(payload)
-                except Exception:
-                    logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
-                    continue
+                if event == 'connected':
+                    logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
+                elif event == 'start':
+                    stream_sid = message['start'].get('streamSid') if message.get('start') else None
+                    logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+                    
+                    # Feature: Audio Dumping for Debugging
+                    try:
+                        filepath = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
+                        audio_dump_file = open(filepath, 'wb')
+                        logger.info(f"[{call_sid}] [AUDIO_DUMP] Dumping inbound audio to {filepath}")
+                    except Exception as e:
+                        logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to open dump file: {e}")
+                elif event == 'media':
+                    media = message.get('media', {})
+                    track = media.get('track')
+                    payload_b64 = media.get('payload')
 
-                if not dg_inbound_ready.is_set():
-                    inbound_buffer.append(payload)
+                    if not payload_b64 or track != 'inbound':
+                        continue
+                    
+                    try:
+                        payload = base64.b64decode(payload_b64)
+                        if audio_dump_file:
+                            audio_dump_file.write(payload)
+                    except Exception:
+                        logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
+                        continue
+
+                    if not dg_inbound_ready.is_set():
+                        inbound_buffer.append(payload)
+                    else:
+                        await dg_inbound.send(payload)
+
+                elif event == 'stop':
+                    logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
+                    break
                 else:
-                    await dg_inbound.send(payload)
-
-            elif event == 'stop':
-                logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
+                    logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {json.dumps(message)}")
+            except Exception as e:
+                logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
                 break
-            else:
-                logger.warning(f"[{call_sid}] Received unknown event from SignalWire: {json.dumps(message)}")
-        except Exception as e:
-            logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
-            break
     finally:
         if audio_dump_file:
             logger.info(f"[{call_sid}] [AUDIO_DUMP] Closing audio dump file.")
