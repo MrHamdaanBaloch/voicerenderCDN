@@ -46,6 +46,17 @@ for directory in [RAW_AUDIO_DIR, OPTIMIZED_AUDIO_DIR]:
         os.makedirs(directory)
 app.mount("/audio", StaticFiles(directory=OPTIMIZED_AUDIO_DIR), name="audio")
 
+@app.get("/debug_audio/{call_sid}")
+async def get_debug_audio(call_sid: str):
+    """Retrieves the raw inbound audio dump from Redis."""
+    redis_key = f"audio_dump:{call_sid}"
+    audio_bytes = redis_client.get(redis_key)
+    if not audio_bytes:
+        raise HTTPException(status_code=404, detail="Audio dump not found for this call SID.")
+    
+    logger.info(f"[{call_sid}] [AUDIO_DUMP] Serving {len(audio_bytes)} bytes of raw audio from Redis.")
+    return Response(content=audio_bytes, media_type="application/octet-stream")
+
 async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
     """Generates raw pcm_mulaw audio bytes suitable for a media stream."""
     request_id = str(uuid.uuid4())
@@ -155,7 +166,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     inbound_buffer = []
     dg_inbound_ready = asyncio.Event()
     stream_sid = None
-    audio_dump_file = None
+    # Removed audio_dump_file, will use Redis instead
 
     async def produce_and_stream_tts(text_to_speak: str, stream_sid_local: str):
         """Helper function to generate and stream TTS audio."""
@@ -265,14 +276,18 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 elif event == 'start':
                     stream_sid = message['start'].get('streamSid') if message.get('start') else None
                     logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+
+                    # --- Greet the caller immediately to keep the connection alive ---
+                    if stream_sid:
+                        logger.info(f"[{call_sid}] [TTS_TRACE] Creating welcome message task.")
+                        welcome_text = "Hello! Welcome to the voice assistant. How can I help you today?"
+                        asyncio.create_task(produce_and_stream_tts(welcome_text, stream_sid))
                     
-                    # Feature: Audio Dumping for Debugging
-                    try:
-                        filepath = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
-                        audio_dump_file = open(filepath, 'wb')
-                        logger.info(f"[{call_sid}] [AUDIO_DUMP] Dumping inbound audio to {filepath}")
-                    except Exception as e:
-                        logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to open dump file: {e}")
+                    # Feature: Audio Dumping for Debugging (now using Redis)
+                    redis_key = f"audio_dump:{call_sid}"
+                    redis_client.delete(redis_key) # Clear any previous dump for this SID
+                    logger.info(f"[{call_sid}] [AUDIO_DUMP] Initialized Redis key for inbound audio dump: {redis_key}")
+
                 elif event == 'media':
                     media = message.get('media', {})
                     track = media.get('track')
@@ -283,8 +298,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     
                     try:
                         payload = base64.b64decode(payload_b64)
-                        if audio_dump_file:
-                            audio_dump_file.write(payload)
+                        # Append to Redis instead of a file
+                        redis_key = f"audio_dump:{call_sid}"
+                        redis_client.append(redis_key, payload)
                     except Exception:
                         logger.exception(f"[{call_sid}] Failed to base64-decode media payload.")
                         continue
@@ -303,9 +319,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 logger.exception(f"[{call_sid}] CRITICAL ERROR in WebSocket handler main loop: {e}")
                 break
     finally:
-        if audio_dump_file:
-            logger.info(f"[{call_sid}] [AUDIO_DUMP] Closing audio dump file.")
-            audio_dump_file.close()
+        # Set an expiry on the Redis audio dump key instead of closing a file
+        redis_key = f"audio_dump:{call_sid}"
+        if redis_client.exists(redis_key):
+            redis_client.expire(redis_key, 3600) # Keep for 1 hour
+            logger.info(f"[{call_sid}] [AUDIO_DUMP] Inbound audio dump in Redis set to expire in 1 hour.")
+
         logger.info(f"[{call_sid}] Cleaning up: finishing Deepgram connection.")
         try:
             await asyncio.sleep(0.1)
