@@ -251,7 +251,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
     dg_start_task = asyncio.create_task(start_deepgram_connection())
 
-    async for message_str in websocket:
+    try:
+        async for message_str in websocket:
         try:
             message = json.loads(message_str)
             event = message.get('event')
