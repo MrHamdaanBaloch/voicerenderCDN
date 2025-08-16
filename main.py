@@ -252,11 +252,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     dg_start_task = asyncio.create_task(start_deepgram_connection())
 
     try:
-        async for message_str in websocket:
+        while True:
+            message_str = await websocket.receive_text()
             try:
                 message = json.loads(message_str)
                 event = message.get('event')
-                
+
                 logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
 
                 if event == 'connected':
