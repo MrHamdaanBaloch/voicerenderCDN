@@ -153,10 +153,11 @@ async def handle_incoming_call(request: Request):
     start.stream(url=websocket_url, track='inbound_track')
     response.append(start)
 
-    # The pause is removed to allow immediate streaming without any delay.
-    # response.pause(length=60)
+    # A long pause is crucial to keep the call alive while the WebSocket connects
+    # and the agent takes control. The agent's logic will supersede this.
+    response.pause(length=60)
     
-    logger.info(f"[{call_sid}] Responding with cXML (<Start><Stream>) to URL: {websocket_url}")
+    logger.info(f"[{call_sid}] Responding with resilient cXML (<Start><Stream>, <Pause>) to URL: {websocket_url}")
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -323,7 +324,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     if dg_inbound_ready.is_set():
                         await dg_inbound.send(audio_bytes)
                     else:
-                        inbound_buffer.append(payload)
+                        inbound_buffer.append(audio_bytes)
                 elif event == 'stop':
                     logger.info(f"[{call_sid}] SignalWire stream stopped. Closing connections.")
                     break
