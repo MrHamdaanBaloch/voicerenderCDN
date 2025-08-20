@@ -14,6 +14,8 @@ from signalwire.voice_response import VoiceResponse, Connect, Stream, Play, Star
 from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 import redis
 import aiofiles
+import wave
+import audioop
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -57,6 +59,38 @@ async def get_debug_audio(call_sid: str):
     
     logger.info(f"[{call_sid}] [AUDIO_DUMP] Serving {len(audio_bytes)} bytes of raw audio from Redis.")
     return Response(content=audio_bytes, media_type="application/octet-stream")
+
+@app.get("/save_audio/{call_sid}")
+async def save_audio(call_sid: str):
+    """Retrieves the raw inbound audio dump from Redis and saves it to a file."""
+    logger.info(f"[{call_sid}] [AUDIO_DUMP] Received request to save audio.")
+    redis_key = f"audio_dump:{call_sid}"
+    
+    if not redis_client.exists(redis_key):
+        logger.error(f"[{call_sid}] [AUDIO_DUMP] Audio not found in Redis for key: {redis_key}")
+        raise HTTPException(status_code=404, detail=f"Audio dump not found for call SID: {call_sid}. It may have expired or never existed.")
+        
+    audio_bytes = redis_client.get(redis_key)
+    logger.info(f"[{call_sid}] [AUDIO_DUMP] Retrieved {len(audio_bytes)} bytes from Redis.")
+    
+    file_path = os.path.join(OPTIMIZED_AUDIO_DIR, f"{call_sid}.wav")
+
+    try:
+        # Convert mu-law bytes to 16-bit linear PCM
+        pcm_data = audioop.ulaw2lin(audio_bytes, 2)
+
+        # Write the PCM data to a WAV file
+        with wave.open(file_path, 'wb') as wf:
+            wf.setnchannels(1)       # mono
+            wf.setsampwidth(2)       # 16-bit
+            wf.setframerate(8000)    # 8kHz
+            wf.writeframes(pcm_data)
+
+        logger.info(f"[{call_sid}] [AUDIO_DUMP] Saved {len(audio_bytes)} bytes of raw audio from Redis to {file_path}.")
+        return {"message": f"Audio for call {call_sid} saved to {file_path}."}
+    except Exception as e:
+        logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to convert and save audio: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to convert audio: {str(e)}")
 
 async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
     """Generates raw pcm_mulaw audio bytes suitable for a media stream."""
@@ -312,13 +346,8 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                     # Decode the mu-law audio from base64
                     audio_bytes = base64.b64decode(payload_b64)
 
-                    # Save the raw audio chunk to a file for debugging
-                    try:
-                        debug_audio_path = os.path.join(RAW_AUDIO_DIR, f"{call_sid}_inbound.raw")
-                        async with aiofiles.open(debug_audio_path, 'ab') as f:
-                            await f.write(audio_bytes)
-                    except Exception as e:
-                        logger.error(f"[{call_sid}] Failed to write to debug audio file: {e}")
+                    # Append to Redis for debugging
+                    redis_client.append(f"audio_dump:{call_sid}", audio_bytes)
 
                     # Send audio to Deepgram
                     if dg_inbound_ready.is_set():
