@@ -63,17 +63,19 @@ async def get_debug_audio(call_sid: str):
 @app.get("/save_audio/{call_sid}")
 async def save_audio(call_sid: str):
     """Retrieves the raw inbound audio dump from Redis and saves it to a file."""
-    logger.info(f"[{call_sid}] [AUDIO_DUMP] Received request to save audio.")
-    redis_key = f"audio_dump:{call_sid}"
+    # Sanitize call_sid to remove any extraneous quotes from URL
+    sanitized_call_sid = call_sid.strip('"\'')
+    logger.info(f"[{sanitized_call_sid}] [AUDIO_DUMP] Received request to save audio.")
+    redis_key = f"audio_dump:{sanitized_call_sid}"
     
     if not redis_client.exists(redis_key):
-        logger.error(f"[{call_sid}] [AUDIO_DUMP] Audio not found in Redis for key: {redis_key}")
-        raise HTTPException(status_code=404, detail=f"Audio dump not found for call SID: {call_sid}. It may have expired or never existed.")
+        logger.error(f"[{sanitized_call_sid}] [AUDIO_DUMP] Audio not found in Redis for key: {redis_key}")
+        raise HTTPException(status_code=404, detail=f"Audio dump not found for call SID: {sanitized_call_sid}. It may have expired or never existed.")
         
     audio_bytes = redis_client.get(redis_key)
-    logger.info(f"[{call_sid}] [AUDIO_DUMP] Retrieved {len(audio_bytes)} bytes from Redis.")
+    logger.info(f"[{sanitized_call_sid}] [AUDIO_DUMP] Retrieved {len(audio_bytes)} bytes from Redis.")
     
-    file_path = os.path.join(OPTIMIZED_AUDIO_DIR, f"{call_sid}.wav")
+    file_path = os.path.join(OPTIMIZED_AUDIO_DIR, f"{sanitized_call_sid}.wav")
 
     try:
         # Convert mu-law bytes to 16-bit linear PCM
@@ -86,10 +88,10 @@ async def save_audio(call_sid: str):
             wf.setframerate(8000)    # 8kHz
             wf.writeframes(pcm_data)
 
-        logger.info(f"[{call_sid}] [AUDIO_DUMP] Saved {len(audio_bytes)} bytes of raw audio from Redis to {file_path}.")
-        return {"message": f"Audio for call {call_sid} saved to {file_path}."}
+        logger.info(f"[{sanitized_call_sid}] [AUDIO_DUMP] Saved {len(audio_bytes)} bytes of raw audio from Redis to {file_path}.")
+        return {"message": f"Audio for call {sanitized_call_sid} saved to {file_path}."}
     except Exception as e:
-        logger.error(f"[{call_sid}] [AUDIO_DUMP] Failed to convert and save audio: {e}", exc_info=True)
+        logger.error(f"[{sanitized_call_sid}] [AUDIO_DUMP] Failed to convert and save audio: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to convert audio: {str(e)}")
 
 async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
@@ -184,7 +186,7 @@ async def handle_incoming_call(request: Request):
     websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
     
     start = Start()
-    start.stream(url=websocket_url, track='inbound_track')
+    start.stream(url=websocket_url, track='both_tracks')
     response.append(start)
 
     # A long pause is crucial to keep the call alive while the WebSocket connects
