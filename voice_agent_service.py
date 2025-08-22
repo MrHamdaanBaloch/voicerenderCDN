@@ -6,6 +6,7 @@ import asyncio
 import wave
 import audioop
 import queue # Import the standard queue module
+import time # Added for latency measurement
 from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, Request, Response, HTTPException
@@ -72,6 +73,9 @@ app.mount("/audio", StaticFiles(directory=PUBLIC_AUDIO_DIR), name="audio")
 # Queue to hold transcripts for Groq processing (thread-safe for Deepgram thread)
 transcript_queue = queue.Queue()
 
+# Dictionary to hold ongoing transcripts for each call_sid
+call_transcript_buffers = {}
+
 # -------------------------------
 # Redis helpers (optional)
 # -------------------------------
@@ -104,23 +108,52 @@ def _r_get(key: str) -> Optional[bytes]:
 # Deepgram Event Handlers
 # -------------------------------
 def on_deepgram_open(self, *args, **kwargs):
-    logger.info(f"Deepgram OPEN")
+    call_sid = kwargs.get('call_sid', 'unknown')
+    logger.info(f"[{call_sid}] Deepgram OPEN")
+    # Store start time for latency measurement
+    kwargs['deepgram_start_time'] = time.time()
 
 def on_deepgram_transcript(self, result, **kwargs):
+    call_sid = kwargs.get('call_sid', 'unknown')
     try:
-        alt = result.channel.alternatives[0]
-        if alt.transcript:
-            logger.info(f"📝 Deepgram Transcript: {alt.transcript}")
-            # Put the transcript into the thread-safe queue
-            transcript_queue.put(alt.transcript)
+        if result.is_final:
+            transcript = result.channel.alternatives[0].transcript
+            if transcript:
+                # Accumulate final transcripts into the buffer
+                call_transcript_buffers.setdefault(call_sid, []).append(transcript)
+                logger.info(f"[{call_sid}] 📝 Deepgram Final Transcript (accumulating): {transcript}")
+        else:
+            # Log interim results for debugging, but don't process with LLM yet
+            interim_transcript = result.channel.alternatives[0].transcript
+            if interim_transcript:
+                logger.debug(f"[{call_sid}] 📝 Deepgram Interim Transcript: {interim_transcript}")
     except Exception as e:
-        logger.error(f"Error processing Deepgram transcript: {e}")
+        logger.error(f"[{call_sid}] Error processing Deepgram transcript: {e}")
+
+def on_deepgram_utterance_end(self, utterance_end, **kwargs):
+    call_sid = kwargs.get('call_sid', 'unknown')
+    if call_sid in call_transcript_buffers and call_transcript_buffers[call_sid]:
+        full_utterance = " ".join(call_transcript_buffers[call_sid])
+        logger.info(f"[{call_sid}] 🗣️ Utterance End Detected. Full utterance: '{full_utterance}'")
+        
+        # Measure latency from Deepgram start to utterance end
+        deepgram_start_time = kwargs.get('deepgram_start_time')
+        if deepgram_start_time:
+            latency = (time.time() - deepgram_start_time) * 1000
+            logger.info(f"[{call_sid}] ⏱️ Deepgram Utterance End Latency: {latency:.2f} ms")
+        
+        transcript_queue.put((full_utterance, time.time(), call_sid)) # Pass transcript, current time, and call_sid
+        call_transcript_buffers[call_sid].clear() # Clear buffer after sending to Groq
+    else:
+        logger.debug(f"[{call_sid}] Utterance End detected but no accumulated transcript.")
 
 def on_deepgram_error(self, error, **kwargs):
-    logger.error(f"Deepgram ERROR: {error}")
+    call_sid = kwargs.get('call_sid', 'unknown')
+    logger.error(f"[{call_sid}] Deepgram ERROR: {error}")
 
 def on_deepgram_close(self, *args, **kwargs):
-    logger.info(f"Deepgram CLOSE")
+    call_sid = kwargs.get('call_sid', 'unknown')
+    logger.info(f"[{call_sid}] Deepgram CLOSE")
 
 # -------------------------------
 # HTTP Routes
@@ -200,10 +233,14 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     # Deepgram live connection
     dg_conn = deepgram_client.listen.websocket.v("1")
 
-    dg_conn.on(LiveTranscriptionEvents.Open, on_deepgram_open)
-    dg_conn.on(LiveTranscriptionEvents.Transcript, on_deepgram_transcript)
-    dg_conn.on(LiveTranscriptionEvents.Error, on_deepgram_error)
-    dg_conn.on(LiveTranscriptionEvents.Close, on_deepgram_close)
+    # Pass call_sid and a mutable dictionary for latency tracking to handlers using functools.partial
+    from functools import partial
+    latency_tracking = {} # Dictionary to store start times for this specific call's Deepgram connection
+    dg_conn.on(LiveTranscriptionEvents.Open, partial(on_deepgram_open, call_sid=call_sid, latency_tracking=latency_tracking))
+    dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking))
+    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking)) # New handler
+    dg_conn.on(LiveTranscriptionEvents.Error, partial(on_deepgram_error, call_sid=call_sid, latency_tracking=latency_tracking))
+    dg_conn.on(LiveTranscriptionEvents.Close, partial(on_deepgram_close, call_sid=call_sid, latency_tracking=latency_tracking))
 
     # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames
     try:
@@ -215,7 +252,9 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                 sample_rate=8000,     # SignalWire audio format
                 channels=1,
                 smart_format=True,
-                interim_results=False # Only get final transcripts
+                interim_results=True, # Enable interim results for better human-like interaction
+                utterance_end_ms=1000, # Detect end of utterance after 1 second of silence
+                punctuate=True # Enable punctuation for better LLM input
             )
         )
         logger.info(f"[{call_sid}] Deepgram START requested")
@@ -299,15 +338,26 @@ async def process_transcripts_with_groq():
     logger.info("Groq processing task started.")
     while True:
         try:
-            transcript = transcript_queue.get_nowait()
-            if transcript is None: # Sentinel value to stop the task
+            transcript_data = transcript_queue.get_nowait()
+            if transcript_data is None: # Sentinel value to stop the task
                 logger.info("Groq task: Received stop signal.")
                 break
 
-            logger.info(f"Sending to Groq: '{transcript}'")
+            transcript, deepgram_utterance_end_time, call_sid = transcript_data
+            
+            # Measure latency from Deepgram utterance end to sending to Groq
+            latency_to_groq_send = (time.time() - deepgram_utterance_end_time) * 1000
+            logger.info(f"[{call_sid}] ⏱️ Latency (Utterance End to Groq Send): {latency_to_groq_send:.2f} ms")
+
+            logger.info(f"[{call_sid}] Sending to Groq: '{transcript}'")
+            groq_request_start_time = time.time()
             try:
                 chat_completion = groq_client.chat.completions.create(
                     messages=[
+                        {
+                            "role": "system",
+                            "content": "You are a helpful AI assistant. Respond concisely and naturally, like a human.",
+                        },
                         {
                             "role": "user",
                             "content": transcript,
@@ -315,10 +365,15 @@ async def process_transcripts_with_groq():
                     ],
                     model="llama3-8b-8192", # Or another suitable Groq model
                 )
+                groq_response_time = time.time()
                 groq_response = chat_completion.choices[0].message.content
-                logger.info(f"🤖 Groq Response: {groq_response}\n")
+                
+                # Measure Groq API latency
+                groq_api_latency = (groq_response_time - groq_request_start_time) * 1000
+                logger.info(f"[{call_sid}] ⏱️ Groq API Latency: {groq_api_latency:.2f} ms")
+                logger.info(f"[{call_sid}] 🤖 Groq Response: {groq_response}\n")
             except Exception as e:
-                logger.error(f"Error getting Groq response: {e}")
+                logger.error(f"[{call_sid}] Error getting Groq response: {e}")
             finally:
                 transcript_queue.task_done() # Mark as done even if Groq fails
         except queue.Empty:
