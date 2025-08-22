@@ -198,132 +198,79 @@ async def handle_incoming_call(request: Request):
 
 @app.websocket("/media/{call_sid}")
 async def media_websocket_handler(websocket: WebSocket, call_sid: str):
-    """Handles the bidirectional audio stream between SignalWire and Deepgram."""
+    """Handles the bidirectional media stream for a call."""
     logger.info(f"!!!!!! WebSocket HANDLER ENTRY for call {call_sid}")
     await websocket.accept()
     logger.info(f"🎙️ [BLACKBOX] WebSocket connection accepted for call {call_sid}")
 
-    dg_inbound = deepgram_client.listen.asynclive.v("1")
-
-    inbound_buffer = []
-    dg_inbound_ready = asyncio.Event()
-    stream_sid = None
-    final_transcript_parts = []
+    # --- Initialize State & Events ---
     user_is_speaking_event = asyncio.Event()
-    # Removed audio_dump_file, will use Redis instead
-
-    async def produce_and_stream_tts(text_to_speak: str, stream_sid_local: str):
-        """Helper function to generate and stream TTS audio."""
-        try:
-            logger.info(f"[{call_sid}] [BLACKBOX] Starting TTS generation task for text: '{text_to_speak[:30]}...'")
-            audio_bytes = await generate_tts_mulaw_bytes_for_stream(text_to_speak, call_sid)
-            await send_audio_payload_chunked(websocket, stream_sid_local, audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
-            logger.info(f"[{call_sid}] [BLACKBOX] TTS streaming task completed.")
-        except Exception as e:
-            logger.exception(f"[{call_sid}] [BLACKBOX] Error in produce_and_stream_tts: {e}")
-
-    async def process_and_respond(transcript: str, stream_sid_local: str):
-        logger.info(f"[{call_sid}] [BLACKBOX] Starting process_and_respond for transcript: '{transcript}'")
-        redis_key = f"conversation:{call_sid}"
-        
-        try:
-            history_json = redis_client.get(redis_key)
-            conversation_history = json.loads(history_json) if history_json else []
-            
-            system_prompt = (
-                "You are a highly responsive, friendly, and human-like voice assistant. "
-                "Keep your responses concise and conversational, suitable for a real-time phone call. "
-                "Your goal is to provide accurate information quickly and naturally."
-            )
-            messages = [{"role": "system", "content": system_prompt}]
-            messages.extend(conversation_history)
-            messages.append({"role": "user", "content": transcript})
-            
-            logger.info(f"[{call_sid}] [LLM_TRACE] Sending transcript to LLM...")
-            chat_completion = await asyncio.to_thread(groq_client.chat.completions.create, messages=messages, model="llama3-8b-8192")
-            llm_response_text = chat_completion.choices[0].message.content
-            logger.info(f"[{call_sid}] [LLM_TRACE] LLM generated response: '{llm_response_text[:50]}...'")
-
-            conversation_history.append({"role": "user", "content": transcript})
-            conversation_history.append({"role": "assistant", "content": llm_response_text})
-            redis_client.set(redis_key, json.dumps(conversation_history), ex=3600)
-
-            if llm_response_text:
-                user_is_speaking_event.clear()
-                logger.info(f"[{call_sid}] [BARGE-IN] Cleared user speaking event before generating new response.")
-                logger.info(f"[{call_sid}] [TTS_TRACE] Creating TTS task for response.")
-                asyncio.create_task(produce_and_stream_tts(llm_response_text, stream_sid_local))
-
-        except Exception as e:
-            logger.error(f"[{call_sid}] [BLACKBOX] An error occurred in process_and_respond.", exc_info=True)
-        
-        logger.info(f"[{call_sid}] [BLACKBOX] FINISHED processing transcript: '{transcript}'")
-
-    async def on_message(result, **kwargs):
-        logger.debug(f"[{call_sid}] Deepgram RAW message: {str(result)}")
-        try:
-            transcript = result.channel.alternatives[0].transcript.strip()
-            if not transcript:
-                return
-        except Exception:
-            # This can happen on interim results, it's not a critical error.
-            return
-
-        speech_final = getattr(result, "speech_final", False) or getattr(result, "is_final", False)
-
-        if transcript and speech_final:
-            logger.info(f"[{call_sid}] Deepgram speech_final fragment received: '{transcript}'")
-            final_transcript_parts.append(transcript)
-
-    async def on_utterance_end(result, **kwargs):
-        logger.info(f"[{call_sid}] Deepgram UtteranceEnd received.")
-        if stream_sid and final_transcript_parts:
-            full_sentence = " ".join(final_transcript_parts).strip()
-            logger.info(f"[{call_sid}] Processing complete utterance: '{full_sentence}'")
-            if full_sentence:
-                asyncio.create_task(process_and_respond(full_sentence, stream_sid))
-            final_transcript_parts.clear()
-
-    async def on_error(error, **kwargs):
-        logger.error(f"[{call_sid}] Deepgram connection error: {error}", exc_info=True)
-
-    dg_inbound.on(LiveTranscriptionEvents.Transcript, on_message)
-    dg_inbound.on(LiveTranscriptionEvents.UtteranceEnd, on_utterance_end)
-    dg_inbound.on(LiveTranscriptionEvents.Error, on_error)
+    deepgram_ready = asyncio.Event()
+    stream_sid = None
+    dg_connection = None
+    buffered_frames = []
 
     async def start_deepgram_connection():
         try:
             logger.info(f"[{call_sid}] [BLACKBOX] Attempting to start Deepgram connection...")
-            await dg_inbound.start(
-                model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000,
-                punctuate=True, smart_format=True, interim_results=True, vad_events=True, endpointing=600,
-                utterance_end_ms="1000"
-            )
-            logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection STARTED successfully.")
+            dg_connection = deepgram_client.listen.asynclive.v("1")
+
+            async def on_message(self, result, **kwargs):
+                if result.channel.alternatives[0].transcript:
+                    transcript = result.channel.alternatives[0].transcript
+                    logger.info(f"[{call_sid}] [DEEPGRAM] Transcript received: {transcript}")
+
+            async def on_open(self, open, **kwargs):
+                logger.info(f"[{call_sid}] [BLACKBOX] Deepgram connection STARTED successfully.")
+                deepgram_ready.set()
+                logger.info(f"[{call_sid}] [BLACKBOX] Deepgram ready event SET.")
+                # Flush any audio frames that were buffered before Deepgram was ready
+                if buffered_frames:
+                    logger.info(f"[{call_sid}] [BLACKBOX] Flushing {len(buffered_frames)} buffered frames to Deepgram.")
+                    for frame in buffered_frames:
+                        await dg_connection.send(frame)
+                    buffered_frames.clear()
+                    logger.info(f"[{call_sid}] [BLACKBOX] Buffer flushed. Deepgram startup task complete.")
+
+            dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
+            dg_connection.on(LiveTranscriptionEvents.Open, on_open)
+
+            await dg_connection.start(LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000, smart_format=True))
+
+        deepgram_task = asyncio.create_task(start_deepgram_connection())
+
+        try:
+            # Play a welcome message as soon as the stream starts to prevent dead air.
+            await deepgram_ready.wait() # Wait until Deepgram is ready before we can potentially receive an interrupt.
+            logger.info(f"[{call_sid}] [PROACTIVE_GREETING] Deepgram is ready. Generating and sending welcome message.")
+            greeting_text = "Hello! Welcome to the voice agent. How can I help you today?"
+            tts_audio_bytes = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
             
-            dg_inbound_ready.set()
-            logger.info(f"[{call_sid}] [BLACKBOX] Deepgram ready event SET.")
-            
-            logger.info(f"[{call_sid}] [BLACKBOX] Flushing {len(inbound_buffer)} buffered frames to Deepgram.")
-            for chunk in inbound_buffer:
-                await dg_inbound.send(chunk)
-            inbound_buffer.clear()
-            logger.info(f"[{call_sid}] [BLACKBOX] Buffer flushed. Deepgram startup task complete.")
-
-        except Exception as e:
-            logger.critical(f"[{call_sid}] [BLACKBOX] CRITICAL ERROR during Deepgram start: {e}", exc_info=True)
-
-    dg_start_task = asyncio.create_task(start_deepgram_connection())
-
-    try:
-        while True:
-            try:
-                message_str = await websocket.receive_text()
-                message = json.loads(message_str)
-                event = message.get('event')
-
+            # We need the stream_sid to send audio, so we must wait for the 'start' event.
+            # This creates a potential race condition if the 'start' event is delayed.
+            # A more robust solution would queue this action until stream_sid is known.
+        
+            while not stream_sid:
+                try:
+                    message = await asyncio.wait_for(websocket.receive_text(), timeout=1.0)
+                    data = json.loads(message)
+                    if data['event'] == 'start':
+                        stream_sid = data['start']['streamSid']
+                        logger.info(f"[{call_sid}] SignalWire stream started. SID: {stream_sid}")
+                        break # Exit loop once we have the stream_sid
+                except asyncio.TimeoutError:
+                    logger.warning(f"[{call_sid}] Timed out waiting for 'start' event. Still waiting...")
+                    continue
+        
+            if stream_sid:
+                await send_audio_payload_chunked(websocket, stream_sid, tts_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
+            else:
+                logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
+        
+            # Main loop to process incoming media from SignalWire
+            while True:
+                message = await websocket.receive_text()
                 logger.debug(f"[{call_sid}] [BLACKBOX] Received SignalWire message: {json.dumps(message)}")
-
                 if event == 'connected':
                     logger.info(f"[{call_sid}] SignalWire WebSocket connected. Protocol: {message.get('protocol', 'N/A')}")
                 elif event == 'start':
