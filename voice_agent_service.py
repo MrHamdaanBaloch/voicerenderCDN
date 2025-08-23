@@ -234,6 +234,13 @@ def on_deepgram_utterance_end(self, utterance_end, **kwargs):
     if user_is_speaking_event:
         user_is_speaking_event.clear() # User finished speaking, clear event
 
+def on_deepgram_speech_started(self, speech_started, **kwargs):
+    call_sid = kwargs.get('call_sid', 'unknown')
+    user_is_speaking_event = kwargs.get('user_is_speaking_event')
+    logger.info(f"[{call_sid}] 🗣️ Deepgram Speech Started event received.")
+    if user_is_speaking_event:
+        user_is_speaking_event.set()
+
 def on_deepgram_error(self, error, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
     logger.error(f"[{call_sid}] Deepgram ERROR: {error}")
@@ -442,7 +449,6 @@ async def media_ws(websocket: WebSocket, call_sid: str):
             pass
 
         logger.info(f"[{call_sid}] WebSocket closed")
-    finally:
         # Clean up call state
         if call_sid in call_state:
             del call_state[call_sid]
