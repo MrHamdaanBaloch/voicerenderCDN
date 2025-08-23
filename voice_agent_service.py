@@ -274,7 +274,7 @@ async def incoming_call(request: Request):
 
     vr = VoiceResponse()
     st = Start()
-    st.stream(url=ws_url, track="both_tracks")  # request both; we forward 'inbound'
+    st.stream(url=ws_url, track="both_tracks", record="true")  # request both; we forward 'inbound', and record the stream
     vr.append(st)
     vr.pause(length=60)  # safety net to keep the call alive
 
