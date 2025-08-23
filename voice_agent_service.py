@@ -153,8 +153,10 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
         logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Finished streaming {chunk_count} chunks.")
     except WebSocketDisconnect:
         logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Client disconnected during audio streaming. Halting.")
+        raise # Re-raise to be caught by the main media_ws handler
     except Exception as e:
         logger.exception(f"[{call_sid}] [OUTBOUND_AUDIO] Unexpected error while streaming outbound audio chunks: {e}")
+        raise # Re-raise to be caught by the main media_ws handler
 
 # -------------------------------
 # Redis helpers (optional)
@@ -276,9 +278,14 @@ async def incoming_call(request: Request):
     st = Start()
     st.stream(url=ws_url, track="both_tracks", record="true")  # request both; we forward 'inbound', and record the stream
     vr.append(st)
-    vr.pause(length=60)  # safety net to keep the call alive
+    # Add a <Gather> verb with a long timeout to keep the call active
+    # This prevents SignalWire from ending the call prematurely after the <Stream>
+    vr.gather(num_digits=1, timeout=3600, action="/noop") # 1 hour timeout, action to a non-existent endpoint or a simple no-op
 
-    logger.info(f"[{call_sid}] Returning <Start><Stream> to {ws_url}")
+    logger.info(f"[{call_sid}] Stream recording enabled.")
+    logger.info(f"[{call_sid}] Removed TwiML Pause to ensure continuous streaming.")
+    logger.info(f"[{call_sid}] Added <Gather> with long timeout to keep call active.")
+    logger.info(f"[{call_sid}] Returning <Start><Stream> and <Gather> to {ws_url}")
     return Response(content=str(vr), media_type="application/xml")
 
 @app.get("/save_audio/{call_sid}")
@@ -386,7 +393,21 @@ async def media_ws(websocket: WebSocket, call_sid: str):
 
         # Main loop to process incoming media from SignalWire
         while True:
-            raw_msg = await websocket.receive_text()
+            try:
+                raw_msg = await websocket.receive_text()
+            except WebSocketDisconnect:
+                logger.info(f"[{call_sid}] WebSocket client disconnected during main loop. Exiting.")
+                break
+            except RuntimeError as e: # Catch the specific RuntimeError for closed sockets
+                if "WebSocket is not connected" in str(e):
+                    logger.info(f"[{call_sid}] WebSocket connection lost during receive_text. Exiting: {e}")
+                    break
+                else:
+                    raise # Re-raise other RuntimeErrors
+            except Exception as e:
+                logger.exception(f"[{call_sid}] Unexpected error receiving WebSocket message. Exiting: {e}")
+                break
+
             msg = json.loads(raw_msg)
             event = msg.get("event")
 
