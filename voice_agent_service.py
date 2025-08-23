@@ -274,6 +274,8 @@ async def incoming_call(request: Request):
     host = RENDER_EXTERNAL_URL.replace("https://", "").replace("http://", "")
     ws_url = f"wss://{host}/media/{call_sid}"
 
+    logger.info(f"[{call_sid}] Using RENDER_EXTERNAL_URL: {RENDER_EXTERNAL_URL} for WebSocket URL: {ws_url}")
+
     vr = VoiceResponse()
     st = Start()
     st.stream(url=ws_url, track="both_tracks", record="true")  # request both; we forward 'inbound', and record the stream
