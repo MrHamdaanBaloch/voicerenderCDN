@@ -7,6 +7,8 @@ import wave
 import audioop
 import queue # Import the standard queue module
 import time # Added for latency measurement
+import aiofiles # Added for async file operations
+import uuid # Added for unique IDs for temporary files
 from typing import Optional, List
 
 from fastapi import FastAPI, WebSocket, Request, Response, HTTPException
@@ -67,7 +69,9 @@ redis_client: Optional[redis.Redis] = (
 
 # Public dir to save converted WAVs for quick download
 PUBLIC_AUDIO_DIR = "public_audio"
+RAW_AUDIO_DIR = "temp_raw_audio" # Directory for temporary raw audio files
 os.makedirs(PUBLIC_AUDIO_DIR, exist_ok=True)
+os.makedirs(RAW_AUDIO_DIR, exist_ok=True) # Ensure temp raw audio dir exists
 app.mount("/audio", StaticFiles(directory=PUBLIC_AUDIO_DIR), name="audio")
 
 # Queue to hold transcripts for Groq processing (thread-safe for Deepgram thread)
@@ -75,6 +79,82 @@ transcript_queue = queue.Queue()
 
 # Dictionary to hold ongoing transcripts for each call_sid
 call_transcript_buffers = {}
+
+# Dictionary to hold WebSocket and stream_sid for each active call
+call_state = {}
+
+# -------------------------------
+# TTS Logic & Helpers
+# -------------------------------
+def cleanup_file(path: str):
+    """Safely removes a file if it exists."""
+    try:
+        if os.path.exists(path):
+            os.remove(path)
+    except Exception as e:
+        logger.warning(f"Failed to cleanup file {path}: {e}")
+
+async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
+    """Generates raw pcm_mulaw audio bytes suitable for a media stream."""
+    request_id = str(uuid.uuid4())
+    logger.info(f"[{call_sid}] TTS Request [{request_id}]: Generating mu-law bytes for stream. Text: '{text[:50]}...'")
+    raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
+    mulaw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_mulaw.raw")
+
+    try:
+        tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
+        tts_response.write_to_file(raw_filepath)
+
+        command = [
+            "ffmpeg", "-y", "-i", raw_filepath,
+            "-ar", "8000", "-ac", "1",
+            "-f", "mulaw", mulaw_filepath
+        ]
+        process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
+        _, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise Exception(f"ffmpeg mu-law conversion failed: {stderr.decode()}")
+
+        async with aiofiles.open(mulaw_filepath, 'rb') as f:
+            audio_bytes = await f.read()
+        
+        logger.info(f"[{call_sid}] TTS Request [{request_id}]: Successfully generated {len(audio_bytes)} bytes of mu-law audio.")
+        return audio_bytes
+    finally:
+        cleanup_file(raw_filepath)
+        cleanup_file(mulaw_filepath)
+
+async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None, user_is_speaking_event: asyncio.Event = None):
+    """
+    Send mu-law outbound audio to SignalWire as many small frames to mimic real-time.
+    """
+    bytes_per_ms = sample_rate // 1000
+    frame_size = bytes_per_ms * frame_ms
+    total = len(audio_bytes)
+    pos = 0
+    logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Starting to stream {total} bytes to SignalWire in {frame_size}-byte frames.")
+    chunk_count = 0
+    try:
+        while pos < total:
+            if user_is_speaking_event and user_is_speaking_event.is_set():
+                logger.info(f"[{call_sid}] [BARGE-IN] User started speaking. Interrupting TTS playback.")
+                break
+            chunk_count += 1
+            chunk = audio_bytes[pos:pos + frame_size]
+            payload = base64.b64encode(chunk).decode("utf-8")
+            media_message = {
+                "event": "media",
+                "streamSid": stream_sid,
+                "media": {"track": "outbound", "payload": payload}
+            }
+            await websocket.send_text(json.dumps(media_message))
+            pos += frame_size
+            await asyncio.sleep(frame_ms / 1000.0)
+        logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Finished streaming {chunk_count} chunks.")
+    except WebSocketDisconnect:
+        logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Client disconnected during audio streaming. Halting.")
+    except Exception as e:
+        logger.exception(f"[{call_sid}] [OUTBOUND_AUDIO] Unexpected error while streaming outbound audio chunks: {e}")
 
 # -------------------------------
 # Redis helpers (optional)
@@ -115,6 +195,7 @@ def on_deepgram_open(self, *args, **kwargs):
 
 def on_deepgram_transcript(self, result, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
+    user_is_speaking_event = kwargs.get('user_is_speaking_event')
     try:
         if result.is_final:
             transcript = result.channel.alternatives[0].transcript
@@ -122,6 +203,8 @@ def on_deepgram_transcript(self, result, **kwargs):
                 # Accumulate final transcripts into the buffer
                 call_transcript_buffers.setdefault(call_sid, []).append(transcript)
                 logger.info(f"[{call_sid}] 📝 Deepgram Final Transcript (accumulating): {transcript}")
+                if user_is_speaking_event and transcript.strip():
+                    user_is_speaking_event.set() # User is speaking, set event for barge-in
         else:
             # Log interim results for debugging, but don't process with LLM yet
             interim_transcript = result.channel.alternatives[0].transcript
@@ -132,6 +215,7 @@ def on_deepgram_transcript(self, result, **kwargs):
 
 def on_deepgram_utterance_end(self, utterance_end, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
+    user_is_speaking_event = kwargs.get('user_is_speaking_event')
     if call_sid in call_transcript_buffers and call_transcript_buffers[call_sid]:
         full_utterance = " ".join(call_transcript_buffers[call_sid])
         logger.info(f"[{call_sid}] 🗣️ Utterance End Detected. Full utterance: '{full_utterance}'")
@@ -142,10 +226,13 @@ def on_deepgram_utterance_end(self, utterance_end, **kwargs):
             latency = (time.time() - deepgram_start_time) * 1000
             logger.info(f"[{call_sid}] ⏱️ Deepgram Utterance End Latency: {latency:.2f} ms")
         
-        transcript_queue.put((full_utterance, time.time(), call_sid)) # Pass transcript, current time, and call_sid
+        transcript_queue.put((full_utterance, time.time(), call_sid, user_is_speaking_event)) # Pass transcript, current time, call_sid, and event
         call_transcript_buffers[call_sid].clear() # Clear buffer after sending to Groq
     else:
         logger.debug(f"[{call_sid}] Utterance End detected but no accumulated transcript.")
+    
+    if user_is_speaking_event:
+        user_is_speaking_event.clear() # User finished speaking, clear event
 
 def on_deepgram_error(self, error, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
@@ -221,6 +308,10 @@ async def media_ws(websocket: WebSocket, call_sid: str):
 
     stream_sid: Optional[str] = None
     dump_key = f"audio_dump:{call_sid}"
+    user_is_speaking_event = asyncio.Event() # Event to signal if user is speaking (for barge-in)
+
+    # Store websocket and user_is_speaking_event in call_state
+    call_state[call_sid] = {"websocket": websocket, "user_is_speaking_event": user_is_speaking_event}
 
     # prepare Redis key
     if redis_client:
@@ -233,14 +324,15 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     # Deepgram live connection
     dg_conn = deepgram_client.listen.websocket.v("1")
 
-    # Pass call_sid and a mutable dictionary for latency tracking to handlers using functools.partial
+    # Pass call_sid, latency_tracking, and user_is_speaking_event to handlers using functools.partial
     from functools import partial
     latency_tracking = {} # Dictionary to store start times for this specific call's Deepgram connection
     dg_conn.on(LiveTranscriptionEvents.Open, partial(on_deepgram_open, call_sid=call_sid, latency_tracking=latency_tracking))
-    dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking))
-    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking)) # New handler
+    dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event))
+    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event)) # New handler
     dg_conn.on(LiveTranscriptionEvents.Error, partial(on_deepgram_error, call_sid=call_sid, latency_tracking=latency_tracking))
     dg_conn.on(LiveTranscriptionEvents.Close, partial(on_deepgram_close, call_sid=call_sid, latency_tracking=latency_tracking))
+    dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)) # New handler for barge-in
 
     # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames
     try:
@@ -263,6 +355,29 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         dg_conn = None
 
     try:
+        # Initial Greeting
+        greeting_text = "Hello! Welcome to the voice agent. How can I help you today?"
+        greeting_audio_bytes = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
+
+        # Wait for SignalWire 'start' event to get stream_sid before sending outbound audio
+        while not stream_sid:
+            raw_msg = await websocket.receive_text()
+            msg = json.loads(raw_msg)
+            event = msg.get("event")
+            if event == "start":
+                stream_sid = (msg.get("start") or {}).get("streamSid")
+                call_state[call_sid]["stream_sid"] = stream_sid # Store stream_sid in call_state
+                logger.info(f"[{call_sid}] Stream START. SID: {stream_sid}")
+                break
+            else:
+                logger.debug(f"[{call_sid}] Received {event} while waiting for 'start' event.")
+
+        if stream_sid:
+            await send_audio_payload_chunked(websocket, stream_sid, greeting_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
+        else:
+            logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
+
+        # Main loop to process incoming media from SignalWire
         while True:
             raw_msg = await websocket.receive_text()
             msg = json.loads(raw_msg)
@@ -271,7 +386,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
             if event == "connected":
                 logger.info(f"[{call_sid}] SignalWire connected. Protocol: {msg.get('protocol', 'N/A')}")
 
-            elif event == "start":
+            elif event == "start": # This should ideally only happen once, but handle defensively
                 stream_sid = (msg.get("start") or {}).get("streamSid")
                 logger.info(f"[{call_sid}] Stream START. SID: {stream_sid}")
 
@@ -327,6 +442,11 @@ async def media_ws(websocket: WebSocket, call_sid: str):
             pass
 
         logger.info(f"[{call_sid}] WebSocket closed")
+    finally:
+        # Clean up call state
+        if call_sid in call_state:
+            del call_state[call_sid]
+            logger.info(f"[{call_sid}] Cleaned up call state.")
 
 # -------------------------------
 # Groq Processing Task
@@ -343,7 +463,7 @@ async def process_transcripts_with_groq():
                 logger.info("Groq task: Received stop signal.")
                 break
 
-            transcript, deepgram_utterance_end_time, call_sid = transcript_data
+            transcript, deepgram_utterance_end_time, call_sid, user_is_speaking_event = transcript_data
             
             # Measure latency from Deepgram utterance end to sending to Groq
             latency_to_groq_send = (time.time() - deepgram_utterance_end_time) * 1000
@@ -372,8 +492,29 @@ async def process_transcripts_with_groq():
                 groq_api_latency = (groq_response_time - groq_request_start_time) * 1000
                 logger.info(f"[{call_sid}] ⏱️ Groq API Latency: {groq_api_latency:.2f} ms")
                 logger.info(f"[{call_sid}] 🤖 Groq Response: {groq_response}\n")
+
+                # Generate TTS for Groq response and send back to SignalWire
+                tts_audio_bytes = await generate_tts_mulaw_bytes_for_stream(groq_response, call_sid)
+                
+                # Retrieve websocket and stream_sid from call_state
+                current_call_state = call_state.get(call_sid)
+                if current_call_state and current_call_state.get("websocket") and current_call_state.get("stream_sid"):
+                    websocket_for_call = current_call_state["websocket"]
+                    stream_sid_for_call = current_call_state["stream_sid"]
+                    user_is_speaking_event_for_call = current_call_state["user_is_speaking_event"]
+                    
+                    await send_audio_payload_chunked(
+                        websocket_for_call,
+                        stream_sid_for_call,
+                        tts_audio_bytes,
+                        call_sid=call_sid,
+                        user_is_speaking_event=user_is_speaking_event_for_call
+                    )
+                else:
+                    logger.error(f"[{call_sid}] Cannot send outbound TTS: WebSocket or stream_sid not found in call_state.")
+
             except Exception as e:
-                logger.error(f"[{call_sid}] Error getting Groq response: {e}")
+                logger.error(f"[{call_sid}] Error getting Groq response or generating TTS: {e}")
             finally:
                 transcript_queue.task_done() # Mark as done even if Groq fails
         except queue.Empty:
