@@ -102,8 +102,12 @@ async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes
     mulaw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_mulaw.raw")
 
     try:
-        tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
+        tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Fritz-PlayAI", input=text)
         tts_response.write_to_file(raw_filepath)
+
+        if not os.path.exists(raw_filepath) or os.path.getsize(raw_filepath) == 0:
+            logger.error(f"[{call_sid}] TTS Request [{request_id}]: Groq TTS produced empty or missing raw WAV file: {raw_filepath}")
+            raise Exception("Groq TTS produced empty or missing raw WAV file.")
 
         command = [
             "ffmpeg", "-y", "-i", raw_filepath,
@@ -113,11 +117,16 @@ async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes
         process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
         _, stderr = await process.communicate()
         if process.returncode != 0:
+            logger.error(f"[{call_sid}] TTS Request [{request_id}]: ffmpeg mu-law conversion failed. Stderr: {stderr.decode()}")
             raise Exception(f"ffmpeg mu-law conversion failed: {stderr.decode()}")
 
         async with aiofiles.open(mulaw_filepath, 'rb') as f:
             audio_bytes = await f.read()
         
+        if not audio_bytes:
+            logger.error(f"[{call_sid}] TTS Request [{request_id}]: FFMPEG produced empty mu-law audio file.")
+            raise Exception("FFMPEG produced empty mu-law audio file.")
+
         logger.info(f"[{call_sid}] TTS Request [{request_id}]: Successfully generated {len(audio_bytes)} bytes of mu-law audio.")
         return audio_bytes
     finally:
@@ -141,13 +150,22 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
                 break
             chunk_count += 1
             chunk = audio_bytes[pos:pos + frame_size]
+            if not chunk:
+                logger.warning(f"[{call_sid}] [OUTBOUND_AUDIO] Empty chunk generated at pos {pos}. Skipping.")
+                pos += frame_size # Advance to prevent infinite loop
+                continue
             payload = base64.b64encode(chunk).decode("utf-8")
+            logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Sending chunk {chunk_count}, size {len(chunk)} bytes, payload length {len(payload)}") # Changed to INFO for visibility
             media_message = {
                 "event": "media",
                 "streamSid": stream_sid,
                 "media": {"track": "outbound", "payload": payload}
             }
-            await websocket.send_text(json.dumps(media_message))
+            try:
+                await websocket.send_text(json.dumps(media_message))
+            except Exception as ws_e:
+                logger.error(f"[{call_sid}] [OUTBOUND_AUDIO] Failed to send WebSocket message for chunk {chunk_count}: {ws_e}")
+                raise # Re-raise to be caught by the main media_ws handler
             pos += frame_size
             await asyncio.sleep(frame_ms / 1000.0)
         logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Finished streaming {chunk_count} chunks.")
@@ -325,6 +343,8 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     # Store websocket and user_is_speaking_event in call_state
     call_state[call_sid] = {"websocket": websocket, "user_is_speaking_event": user_is_speaking_event}
 
+    logger.info(f"[{call_sid}] WebSocket endpoint URL: wss://{websocket.url.host}{websocket.url.path}")
+
     # prepare Redis key
     if redis_client:
         try:
@@ -370,6 +390,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         # Initial Greeting
         greeting_text = "Hello! Welcome to the voice agent. How can I help you today?"
         greeting_audio_bytes = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
+        logger.info(f"[{call_sid}] Initial greeting audio bytes length: {len(greeting_audio_bytes)}") # Log greeting audio length
 
         # Wait for SignalWire 'start' event to get stream_sid before sending outbound audio
         while not stream_sid:
@@ -487,7 +508,7 @@ async def process_transcripts_with_groq():
                     messages=[
                         {
                             "role": "system",
-                            "content": "You are a helpful AI assistant. Respond concisely and naturally, like a human.",
+                            "content": "You are a helpful AI assistant. Respond concisely and naturally, like a human. Keep your responses between 15 and 35 words.",
                         },
                         {
                             "role": "user",
@@ -522,7 +543,7 @@ async def process_transcripts_with_groq():
                         user_is_speaking_event=user_is_speaking_event_for_call
                     )
                 else:
-                    logger.error(f"[{call_sid}] Cannot send outbound TTS: WebSocket or stream_sid not found in call_state.")
+                    logger.error(f"[{call_sid}] Cannot send outbound TTS: WebSocket or stream_sid not found in call_state. Current call_state: {current_call_state}")
 
             except Exception as e:
                 logger.error(f"[{call_sid}] Error getting Groq response or generating TTS: {e}")
