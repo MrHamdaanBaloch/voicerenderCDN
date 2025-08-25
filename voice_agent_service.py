@@ -16,7 +16,7 @@ from starlette.websockets import WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 
 from dotenv import load_dotenv
-from signalwire.voice_response import VoiceResponse, Start
+from signalwire.voice_response import VoiceResponse
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from groq import Groq
 import redis
@@ -312,10 +312,9 @@ async def incoming_call(request: Request):
     logger.info(f"[{call_sid}] Using RENDER_EXTERNAL_URL: {RENDER_EXTERNAL_URL} for WebSocket URL: {ws_url}")
 
     vr = VoiceResponse()
-    st = Start()
+    connect = vr.connect()
     # Explicitly set codec and sampleRate for outbound audio to ensure SignalWire interprets it correctly
-    st.stream(url=ws_url, track="both_tracks", record="true", codec="mulaw", sampleRate="8000")
-    vr.append(st)
+    connect.stream(url=ws_url, track="both_tracks", record="true", codec="mulaw", sampleRate="8000")
     vr.pause(length=60)  # safety net to keep the call alive
 
     logger.info(f"[{call_sid}] Stream recording enabled.")
