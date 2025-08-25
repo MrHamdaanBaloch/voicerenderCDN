@@ -343,7 +343,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     # Store websocket and user_is_speaking_event in call_state
     call_state[call_sid] = {"websocket": websocket, "user_is_speaking_event": user_is_speaking_event}
 
-    logger.info(f"[{call_sid}] WebSocket endpoint URL: wss://{websocket.url.host}{websocket.url.path}")
+    logger.info(f"[{call_sid}] WebSocket endpoint URL: {str(websocket.url)}")
 
     # prepare Redis key
     if redis_client:
