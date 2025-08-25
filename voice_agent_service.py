@@ -366,26 +366,6 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     dg_conn.on(LiveTranscriptionEvents.Close, partial(on_deepgram_close, call_sid=call_sid, latency_tracking=latency_tracking))
     dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)) # New handler for barge-in
 
-    # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames
-    try:
-        dg_conn.start(
-            LiveOptions(
-                model="nova-3",
-                language="en-US",
-                encoding="mulaw",    # SignalWire audio format
-                sample_rate=8000,     # SignalWire audio format
-                channels=1,
-                smart_format=True,
-                interim_results=True, # Enable interim results for better human-like interaction
-                utterance_end_ms=1000, # Detect end of utterance after 1 second of silence
-                punctuate=True # Enable punctuation for better LLM input
-            )
-        )
-        logger.info(f"[{call_sid}] Deepgram START requested")
-    except Exception as e:
-        logger.exception(f"[{call_sid}] Failed to start Deepgram: {e}")
-        dg_conn = None
-
     try:
         # Initial Greeting
         greeting_text = "Hello! Welcome to the voice agent. How can I help you today?"
@@ -409,6 +389,26 @@ async def media_ws(websocket: WebSocket, call_sid: str):
             await send_audio_payload_chunked(websocket, stream_sid, greeting_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
         else:
             logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
+
+        # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames *AFTER* greeting
+        try:
+            dg_conn.start(
+                LiveOptions(
+                    model="nova-3",
+                    language="en-US",
+                    encoding="mulaw",    # SignalWire audio format
+                    sample_rate=8000,     # SignalWire audio format
+                    channels=1,
+                    smart_format=True,
+                    interim_results=True, # Enable interim results for better human-like interaction
+                    utterance_end_ms=1000, # Detect end of utterance after 1 second of silence
+                    punctuate=True # Enable punctuation for better LLM input
+                )
+            )
+            logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting")
+        except Exception as e:
+            logger.exception(f"[{call_sid}] Failed to start Deepgram after greeting: {e}")
+            dg_conn = None
 
         # Main loop to process incoming media from SignalWire
         while True:
