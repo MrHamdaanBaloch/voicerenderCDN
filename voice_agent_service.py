@@ -314,7 +314,7 @@ async def incoming_call(request: Request):
     vr = VoiceResponse()
     connect = vr.connect()
     # Explicitly set codec and sampleRate for outbound audio to ensure SignalWire interprets it correctly
-    connect.stream(url=ws_url, track="both_tracks", record="true", codec="mulaw", sampleRate="8000")
+    connect.stream(url=ws_url, track="both_tracks", record="true")
     vr.pause(length=60)  # safety net to keep the call alive
 
     logger.info(f"[{call_sid}] Stream recording enabled.")
