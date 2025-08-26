@@ -465,7 +465,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                     interim_results=True, # Enable interim results for better human-like interaction
                     utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
                     vad_events=True, # Enable VAD events for SpeechStarted
-                    endpointing="300", # Adjust VAD sensitivity to filter out short background noises
+                    endpointing="750", # Reverted to a moderate VAD sensitivity to avoid ignoring short user utterances
                     filler_words=True # Enable filler word detection for more natural transcription
                 )
             )
