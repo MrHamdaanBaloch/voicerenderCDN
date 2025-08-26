@@ -47,6 +47,15 @@ SIGNALWIRE_SPACE_URL = os.getenv("SIGNALWIRE_SPACE_URL")
 SILENCE_TIMEOUT_SECONDS = int(os.getenv("SILENCE_TIMEOUT_SECONDS", "7")) # Default to 7 seconds
 SILENCE_PROMPT_TEXT = os.getenv("SILENCE_PROMPT_TEXT", "Are you still there? How can I help?")
 
+# Groq TTS Configuration
+GROQ_TTS_MODEL = os.getenv("GROQ_TTS_MODEL", "playai-tts")
+GROQ_TTS_VOICE = os.getenv("GROQ_TTS_VOICE", "Fritz-PlayAI")
+
+# LLM Configuration
+LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", "You are a helpful, professional, and concise AI assistant. Respond naturally, like a human, keeping your responses between 15 and 35 words. Maintain a positive and engaging tone, and always strive to provide value to the user.")
+LLM_MODEL = os.getenv("LLM_MODEL", "llama3-8b-8192")
+
+
 if not DEEPGRAM_API_KEY:
     raise RuntimeError("DEEPGRAM_API_KEY is not set in .env file")
 if not GROQ_API_KEY:
@@ -106,7 +115,7 @@ async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes
     mulaw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_mulaw.raw")
 
     try:
-        tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Fritz-PlayAI", input=text)
+        tts_response = groq_client.audio.speech.create(model=GROQ_TTS_MODEL, voice=GROQ_TTS_VOICE, input=text)
         tts_response.write_to_file(raw_filepath)
 
         raw_file_size = os.path.getsize(raw_filepath) if os.path.exists(raw_filepath) else 0
@@ -392,7 +401,8 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         "user_is_speaking_event": user_is_speaking_event,
         "agent_is_speaking_event": agent_is_speaking_event,
         "last_activity_time": time.time(), # Track last user or agent activity
-        "stream_sid": None # Will be populated once 'start' event is received
+        "stream_sid": None, # Will be populated once 'start' event is received
+        "messages": [{"role": "system", "content": LLM_SYSTEM_PROMPT}] # Initialize conversation history with system prompt
     }
 
     logger.info(f"[{call_sid}] WebSocket endpoint URL: {str(websocket.url)}")
@@ -438,7 +448,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                 logger.debug(f"[{call_sid}] Received {event} while waiting for 'start' event.")
 
         if stream_sid:
-            await send_audio_payload_chunked(websocket, stream_sid, greeting_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)
+            await send_audio_payload_chunked(websocket, stream_sid, greeting_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)
         else:
             logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
 
@@ -454,10 +464,16 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                     smart_format=True,
                     interim_results=True, # Enable interim results for better human-like interaction
                     utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
-                    vad_events=True # Enable VAD events for SpeechStarted
+                    vad_events=True, # Enable VAD events for SpeechStarted
+                    endpointing="300", # Adjust VAD sensitivity to filter out short background noises
+                    filler_words=True # Enable filler word detection for more natural transcription
                 )
             )
             logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting")
+            # Reset last activity time AFTER Deepgram has started listening
+            if call_sid in call_state:
+                call_state[call_sid]["last_activity_time"] = time.time()
+                logger.info(f"[{call_sid}] Reset last_activity_time after Deepgram START.")
         except Exception as e:
             logger.exception(f"[{call_sid}] Failed to start Deepgram after greeting: {e}")
             dg_conn = None
@@ -602,21 +618,29 @@ async def process_transcripts_with_groq():
                     if was_interruption
                     else transcript
                 )
+                # Retrieve conversation history for this call
+                current_call_state = call_state.get(call_sid)
+                if not current_call_state:
+                    logger.error(f"[{call_sid}] Call state not found for Groq processing. Cannot maintain conversation history.")
+                    transcript_queue.task_done()
+                    continue
+
+                messages = current_call_state.get("messages", [])
+                # Ensure system prompt is always the first message if not already present
+                if not messages or messages[0]["role"] != "system":
+                    messages.insert(0, {"role": "system", "content": LLM_SYSTEM_PROMPT})
+                
+                messages.append({"role": "user", "content": user_content})
+
                 chat_completion = groq_client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": "You are a helpful AI assistant. Respond concisely and naturally, like a human. Keep your responses between 15 and 35 words.",
-                        },
-                        {
-                            "role": "user",
-                            "content": user_content,
-                        }
-                    ],
-                    model="llama3-8b-8192", # Or another suitable Groq model
+                    messages=messages, # Use the conversation history
+                    model=LLM_MODEL, # Use configurable LLM model
                 )
                 groq_response_time = time.time()
                 groq_response = chat_completion.choices[0].message.content
+                
+                # Append agent's response to conversation history
+                messages.append({"role": "assistant", "content": groq_response})
                 
                 # Measure Groq API latency
                 groq_api_latency = (groq_response_time - groq_request_start_time) * 1000
