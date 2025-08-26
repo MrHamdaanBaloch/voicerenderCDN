@@ -43,6 +43,10 @@ SIGNALWIRE_CONTEXT = os.getenv("SIGNALWIRE_CONTEXT")
 SIGNALWIRE_PROJECT_ID = os.getenv("SIGNALWIRE_PROJECT_ID")
 SIGNALWIRE_SPACE_URL = os.getenv("SIGNALWIRE_SPACE_URL")
 
+# Proactive Silence Prompting Configuration
+SILENCE_TIMEOUT_SECONDS = int(os.getenv("SILENCE_TIMEOUT_SECONDS", "7")) # Default to 7 seconds
+SILENCE_PROMPT_TEXT = os.getenv("SILENCE_PROMPT_TEXT", "Are you still there? How can I help?")
+
 if not DEEPGRAM_API_KEY:
     raise RuntimeError("DEEPGRAM_API_KEY is not set in .env file")
 if not GROQ_API_KEY:
@@ -150,7 +154,7 @@ async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes
         cleanup_file(raw_filepath)
         cleanup_file(mulaw_filepath)
 
-async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None, user_is_speaking_event: asyncio.Event = None):
+async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None, user_is_speaking_event: asyncio.Event = None, agent_is_speaking_event: asyncio.Event = None):
     """
     Send mu-law outbound audio to SignalWire as many small frames to mimic real-time.
     """
@@ -161,6 +165,10 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
     logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Starting to stream {total} bytes to SignalWire in {frame_size}-byte frames.")
     chunk_count = 0
     try:
+        if agent_is_speaking_event:
+            agent_is_speaking_event.set() # Agent starts speaking
+            if call_sid in call_state:
+                call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time when agent starts speaking
         while pos < total:
             if user_is_speaking_event and user_is_speaking_event.is_set():
                 logger.info(f"[{call_sid}] [BARGE-IN] User started speaking. Interrupting TTS playback.")
@@ -172,7 +180,7 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
                 pos += frame_size # Advance to prevent infinite loop
                 continue
             payload = base64.b64encode(chunk).decode("utf-8")
-            logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Sending chunk {chunk_count}, size {len(chunk)} bytes, payload length {len(payload)}") # Changed to INFO for visibility
+            logger.debug(f"[{call_sid}] [OUTBOUND_AUDIO] Sending chunk {chunk_count}, size {len(chunk)} bytes, payload length {len(payload)}")
             media_message = {
                 "event": "media",
                 "streamSid": stream_sid,
@@ -186,6 +194,10 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
             pos += frame_size
             await asyncio.sleep(frame_ms / 1000.0)
         logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Finished streaming {chunk_count} chunks.")
+        if agent_is_speaking_event:
+            agent_is_speaking_event.clear() # Agent finished speaking
+            if call_sid in call_state:
+                call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time when agent finishes speaking
     except WebSocketDisconnect:
         logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Client disconnected during audio streaming. Halting.")
         raise # Re-raise to be caught by the main media_ws handler
@@ -253,6 +265,12 @@ def on_deepgram_transcript(self, result, **kwargs):
 def on_deepgram_utterance_end(self, utterance_end, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
     user_is_speaking_event = kwargs.get('user_is_speaking_event')
+    agent_is_speaking_event = kwargs.get('agent_is_speaking_event') # Retrieve agent_is_speaking_event
+    
+    was_interruption = False
+    if agent_is_speaking_event and agent_is_speaking_event.is_set():
+        was_interruption = True # User spoke while agent was speaking
+
     if call_sid in call_transcript_buffers and call_transcript_buffers[call_sid]:
         full_utterance = " ".join(call_transcript_buffers[call_sid])
         logger.info(f"[{call_sid}] 🗣️ Utterance End Detected. Full utterance: '{full_utterance}'")
@@ -263,13 +281,18 @@ def on_deepgram_utterance_end(self, utterance_end, **kwargs):
             latency = (time.time() - deepgram_start_time) * 1000
             logger.info(f"[{call_sid}] ⏱️ Deepgram Utterance End Latency: {latency:.2f} ms")
         
-        transcript_queue.put((full_utterance, time.time(), call_sid, user_is_speaking_event)) # Pass transcript, current time, call_sid, and event
+        # Pass was_interruption along with other data
+        transcript_queue.put((full_utterance, time.time(), call_sid, user_is_speaking_event, was_interruption)) 
         call_transcript_buffers[call_sid].clear() # Clear buffer after sending to Groq
     else:
         logger.debug(f"[{call_sid}] Utterance End detected but no accumulated transcript.")
     
     if user_is_speaking_event:
         user_is_speaking_event.clear() # User finished speaking, clear event
+    
+    # Update last activity time for silence detection
+    if call_sid in call_state:
+        call_state[call_sid]["last_activity_time"] = time.time()
 
 def on_deepgram_speech_started(self, speech_started, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
@@ -277,6 +300,10 @@ def on_deepgram_speech_started(self, speech_started, **kwargs):
     logger.info(f"[{call_sid}] 🗣️ Deepgram Speech Started event received.")
     if user_is_speaking_event:
         user_is_speaking_event.set()
+    
+    # Update last activity time for silence detection
+    if call_sid in call_state:
+        call_state[call_sid]["last_activity_time"] = time.time()
 
 def on_deepgram_error(self, error, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
@@ -357,9 +384,16 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     stream_sid: Optional[str] = None
     dump_key = f"audio_dump:{call_sid}"
     user_is_speaking_event = asyncio.Event() # Event to signal if user is speaking (for barge-in)
+    agent_is_speaking_event = asyncio.Event() # Event to signal if agent is speaking (for interruption context)
 
-    # Store websocket and user_is_speaking_event in call_state
-    call_state[call_sid] = {"websocket": websocket, "user_is_speaking_event": user_is_speaking_event}
+    # Store websocket and events in call_state
+    call_state[call_sid] = {
+        "websocket": websocket,
+        "user_is_speaking_event": user_is_speaking_event,
+        "agent_is_speaking_event": agent_is_speaking_event,
+        "last_activity_time": time.time(), # Track last user or agent activity
+        "stream_sid": None # Will be populated once 'start' event is received
+    }
 
     logger.info(f"[{call_sid}] WebSocket endpoint URL: {str(websocket.url)}")
 
@@ -379,10 +413,10 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     latency_tracking = {} # Dictionary to store start times for this specific call's Deepgram connection
     dg_conn.on(LiveTranscriptionEvents.Open, partial(on_deepgram_open, call_sid=call_sid, latency_tracking=latency_tracking))
     dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event))
-    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event)) # New handler
+    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # New handler
     dg_conn.on(LiveTranscriptionEvents.Error, partial(on_deepgram_error, call_sid=call_sid, latency_tracking=latency_tracking))
     dg_conn.on(LiveTranscriptionEvents.Close, partial(on_deepgram_close, call_sid=call_sid, latency_tracking=latency_tracking))
-    dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event)) # New handler for barge-in
+    dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # New handler for barge-in
 
     try:
         # Initial Greeting
@@ -419,8 +453,8 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                     channels=1,
                     smart_format=True,
                     interim_results=True, # Enable interim results for better human-like interaction
-                    utterance_end_ms=1000, # Detect end of utterance after 1 second of silence
-                    punctuate=True # Enable punctuation for better LLM input
+                    utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
+                    vad_events=True # Enable VAD events for SpeechStarted
                 )
             )
             logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting")
@@ -499,6 +533,47 @@ async def media_ws(websocket: WebSocket, call_sid: str):
             logger.info(f"[{call_sid}] Cleaned up call state.")
 
 # -------------------------------
+# Proactive Silence Detection Task
+# -------------------------------
+async def silence_detection_task():
+    """
+    Periodically checks for silence in active calls and sends a proactive prompt.
+    """
+    logger.info("Silence detection task started.")
+    while True:
+        await asyncio.sleep(1) # Check every second
+        current_time = time.time()
+        
+        for call_sid, state in list(call_state.items()): # Iterate over a copy to avoid modification issues
+            websocket = state.get("websocket")
+            stream_sid = state.get("stream_sid")
+            user_is_speaking = state["user_is_speaking_event"].is_set()
+            agent_is_speaking = state["agent_is_speaking_event"].is_set()
+            last_activity_time = state["last_activity_time"]
+
+            if not websocket or not stream_sid:
+                continue # Skip if WebSocket or stream_sid is not yet established
+
+            if not user_is_speaking and not agent_is_speaking:
+                silence_duration = current_time - last_activity_time
+                if silence_duration >= SILENCE_TIMEOUT_SECONDS:
+                    logger.info(f"[{call_sid}] Detected {silence_duration:.2f}s of silence. Sending proactive prompt.")
+                    try:
+                        prompt_audio_bytes = await generate_tts_mulaw_bytes_for_stream(SILENCE_PROMPT_TEXT, call_sid)
+                        await send_audio_payload_chunked(
+                            websocket,
+                            stream_sid,
+                            prompt_audio_bytes,
+                            call_sid=call_sid,
+                            user_is_speaking_event=state["user_is_speaking_event"],
+                            agent_is_speaking_event=state["agent_is_speaking_event"]
+                        )
+                        # Reset last activity time after sending prompt
+                        state["last_activity_time"] = time.time()
+                    except Exception as e:
+                        logger.error(f"[{call_sid}] Failed to send proactive silence prompt: {e}")
+
+# -------------------------------
 # Groq Processing Task
 # -------------------------------
 async def process_transcripts_with_groq():
@@ -513,7 +588,7 @@ async def process_transcripts_with_groq():
                 logger.info("Groq task: Received stop signal.")
                 break
 
-            transcript, deepgram_utterance_end_time, call_sid, user_is_speaking_event = transcript_data
+            transcript, deepgram_utterance_end_time, call_sid, user_is_speaking_event, was_interruption = transcript_data
             
             # Measure latency from Deepgram utterance end to sending to Groq
             latency_to_groq_send = (time.time() - deepgram_utterance_end_time) * 1000
@@ -522,6 +597,11 @@ async def process_transcripts_with_groq():
             logger.info(f"[{call_sid}] Sending to Groq: '{transcript}'")
             groq_request_start_time = time.time()
             try:
+                user_content = (
+                    f"The user interrupted your previous response. Please acknowledge this and respond to their new input: {transcript}"
+                    if was_interruption
+                    else transcript
+                )
                 chat_completion = groq_client.chat.completions.create(
                     messages=[
                         {
@@ -530,7 +610,7 @@ async def process_transcripts_with_groq():
                         },
                         {
                             "role": "user",
-                            "content": transcript,
+                            "content": user_content,
                         }
                     ],
                     model="llama3-8b-8192", # Or another suitable Groq model
@@ -551,14 +631,18 @@ async def process_transcripts_with_groq():
                 if current_call_state and current_call_state.get("websocket") and current_call_state.get("stream_sid"):
                     websocket_for_call = current_call_state["websocket"]
                     stream_sid_for_call = current_call_state["stream_sid"]
+                    websocket_for_call = current_call_state["websocket"]
+                    stream_sid_for_call = current_call_state["stream_sid"]
                     user_is_speaking_event_for_call = current_call_state["user_is_speaking_event"]
+                    agent_is_speaking_event_for_call = current_call_state["agent_is_speaking_event"]
                     
                     await send_audio_payload_chunked(
                         websocket_for_call,
                         stream_sid_for_call,
                         tts_audio_bytes,
                         call_sid=call_sid,
-                        user_is_speaking_event=user_is_speaking_event_for_call
+                        user_is_speaking_event=user_is_speaking_event_for_call,
+                        agent_is_speaking_event=agent_is_speaking_event_for_call
                     )
                 else:
                     logger.error(f"[{call_sid}] Cannot send outbound TTS: WebSocket or stream_sid not found in call_state. Current call_state: {current_call_state}")
@@ -579,6 +663,7 @@ async def process_transcripts_with_groq():
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(process_transcripts_with_groq())
+    asyncio.create_task(silence_detection_task()) # Start the silence detection task
     logger.info("Voice Agent Service started.")
 
 @app.on_event("shutdown")
