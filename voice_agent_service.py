@@ -481,7 +481,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         try:
             dg_conn.start(
                 LiveOptions(
-                    model="nova-3",
+                    model="nova-2-phonecall", # Changed to phonecall optimized model
                     language="en-US",
                     encoding="mulaw",    # SignalWire audio format
                     sample_rate=8000,     # SignalWire audio format
@@ -490,7 +490,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                     interim_results=True, # Enable interim results for better human-like interaction
                     utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
                     vad_events=True, # Enable VAD events for SpeechStarted
-                    endpointing="1000", # Optimized VAD for background noise: 1000ms
+                    endpointing="1500", # Further optimized VAD for background noise: 1500ms
                     filler_words=True # Enable filler word detection for more natural transcription
                 )
             )
