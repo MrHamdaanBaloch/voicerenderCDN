@@ -52,7 +52,7 @@ GROQ_TTS_MODEL = os.getenv("GROQ_TTS_MODEL", "playai-tts")
 GROQ_TTS_VOICE = os.getenv("GROQ_TTS_VOICE", "Fritz-PlayAI")
 
 # LLM Configuration
-LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", "You are a helpful, professional, and concise AI assistant. Respond naturally, like a human, keeping your responses between 15 and 35 words. Maintain a positive and engaging tone, and always strive to provide value to the user.")
+LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", "You are a helpful, professional, and concise AI assistant. Respond naturally, like a human, keeping your responses under 20 words. Maintain a positive and engaging tone, and always strive to provide value to the user.")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3-8b-8192")
 
 # Deepgram Barge-in Configuration
@@ -176,10 +176,9 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
     logger.info(f"[{call_sid}] [OUTBOUND_AUDIO] Starting to stream {total} bytes to SignalWire in {frame_size}-byte frames.")
     chunk_count = 0
     try:
-        if agent_is_speaking_event:
-            agent_is_speaking_event.set() # Agent starts speaking
-            if call_sid in call_state:
-                call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time when agent starts speaking
+        # agent_is_speaking_event.set() is now handled in process_transcripts_with_groq
+        if call_sid in call_state:
+            call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time when agent starts speaking
         while pos < total:
             if user_is_speaking_event and user_is_speaking_event.is_set():
                 logger.info(f"[{call_sid}] [BARGE-IN] User started speaking. Interrupting TTS playback.")
@@ -686,6 +685,12 @@ async def process_transcripts_with_groq():
                     user_is_speaking_event_for_call = current_call_state["user_is_speaking_event"]
                     agent_is_speaking_event_for_call = current_call_state["agent_is_speaking_event"]
                     
+                    # Set agent_is_speaking_event BEFORE streaming starts
+                    if agent_is_speaking_event_for_call:
+                        agent_is_speaking_event_for_call.set()
+                        if call_sid in call_state:
+                            call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time when agent starts speaking
+
                     await send_audio_payload_chunked(
                         websocket_for_call,
                         stream_sid_for_call,
