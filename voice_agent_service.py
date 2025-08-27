@@ -332,8 +332,8 @@ def on_deepgram_speech_started(self, speech_started, **kwargs):
     # --- END ECHO SUPPRESSION ---
 
     logger.info(f"[{call_sid}] 🗣️ Deepgram Speech Started event received.")
-    if user_is_speaking_event:
-        user_is_speaking_event.set()
+    # Removed direct setting of user_is_speaking_event here.
+    # Barge-in will now rely solely on confidence-based interim transcripts.
     
     # Update last activity time for silence detection
     if call_sid in call_state:
