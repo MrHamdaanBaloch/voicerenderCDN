@@ -55,6 +55,8 @@ GROQ_TTS_VOICE = os.getenv("GROQ_TTS_VOICE", "Fritz-PlayAI")
 LLM_SYSTEM_PROMPT = os.getenv("LLM_SYSTEM_PROMPT", "You are a helpful, professional, and concise AI assistant. Respond naturally, like a human, keeping your responses between 15 and 35 words. Maintain a positive and engaging tone, and always strive to provide value to the user.")
 LLM_MODEL = os.getenv("LLM_MODEL", "llama3-8b-8192")
 
+# Deepgram Barge-in Configuration
+DEEPGRAM_BARGE_IN_CONFIDENCE_THRESHOLD = float(os.getenv("DEEPGRAM_BARGE_IN_CONFIDENCE_THRESHOLD", "0.6"))
 
 if not DEEPGRAM_API_KEY:
     raise RuntimeError("DEEPGRAM_API_KEY is not set in .env file")
@@ -254,6 +256,14 @@ def on_deepgram_open(self, *args, **kwargs):
 def on_deepgram_transcript(self, result, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
     user_is_speaking_event = kwargs.get('user_is_speaking_event')
+    agent_is_speaking_event = kwargs.get('agent_is_speaking_event') # Retrieve agent_is_speaking_event
+    
+    # --- ECHO SUPPRESSION: Ignore transcripts if agent is speaking ---
+    if agent_is_speaking_event and agent_is_speaking_event.is_set():
+        logger.debug(f"[{call_sid}] [ECHO_SUPPRESSION] Ignoring Deepgram transcript while agent is speaking.")
+        return
+    # --- END ECHO SUPPRESSION ---
+
     try:
         if result.is_final:
             transcript = result.channel.alternatives[0].transcript
@@ -264,10 +274,18 @@ def on_deepgram_transcript(self, result, **kwargs):
                 if user_is_speaking_event and transcript.strip():
                     user_is_speaking_event.set() # User is speaking, set event for barge-in
         else:
-            # Log interim results for debugging, but don't process with LLM yet
+            # --- LOW-LATENCY, CONFIDENCE-BASED BARGE-IN ---
             interim_transcript = result.channel.alternatives[0].transcript
-            if interim_transcript:
-                logger.debug(f"[{call_sid}] 📝 Deepgram Interim Transcript: {interim_transcript}")
+            confidence = result.channel.alternatives[0].confidence
+            if interim_transcript and confidence and confidence > DEEPGRAM_BARGE_IN_CONFIDENCE_THRESHOLD:
+                logger.info(f"[{call_sid}] 📝 Deepgram Interim Transcript (Confidence {confidence:.2f} > {DEEPGRAM_BARGE_IN_CONFIDENCE_THRESHOLD}): {interim_transcript}")
+                if user_is_speaking_event and not user_is_speaking_event.is_set():
+                    user_is_speaking_event.set() # User is speaking, set event for barge-in
+                    logger.info(f"[{call_sid}] [BARGE-IN] User started speaking based on interim transcript confidence.")
+            else:
+                if interim_transcript:
+                    logger.debug(f"[{call_sid}] 📝 Deepgram Interim Transcript (Confidence {confidence:.2f}): {interim_transcript}")
+            # --- END LOW-LATENCY, CONFIDENCE-BASED BARGE-IN ---
     except Exception as e:
         logger.error(f"[{call_sid}] Error processing Deepgram transcript: {e}")
 
@@ -306,6 +324,14 @@ def on_deepgram_utterance_end(self, utterance_end, **kwargs):
 def on_deepgram_speech_started(self, speech_started, **kwargs):
     call_sid = kwargs.get('call_sid', 'unknown')
     user_is_speaking_event = kwargs.get('user_is_speaking_event')
+    agent_is_speaking_event = kwargs.get('agent_is_speaking_event') # Retrieve agent_is_speaking_event
+
+    # --- ECHO SUPPRESSION: Ignore SpeechStarted if agent is speaking ---
+    if agent_is_speaking_event and agent_is_speaking_event.is_set():
+        logger.debug(f"[{call_sid}] [ECHO_SUPPRESSION] Ignoring Deepgram SpeechStarted while agent is speaking.")
+        return
+    # --- END ECHO SUPPRESSION ---
+
     logger.info(f"[{call_sid}] 🗣️ Deepgram Speech Started event received.")
     if user_is_speaking_event:
         user_is_speaking_event.set()
@@ -422,11 +448,11 @@ async def media_ws(websocket: WebSocket, call_sid: str):
     from functools import partial
     latency_tracking = {} # Dictionary to store start times for this specific call's Deepgram connection
     dg_conn.on(LiveTranscriptionEvents.Open, partial(on_deepgram_open, call_sid=call_sid, latency_tracking=latency_tracking))
-    dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event))
-    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # New handler
+    dg_conn.on(LiveTranscriptionEvents.Transcript, partial(on_deepgram_transcript, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # Pass agent_is_speaking_event
+    dg_conn.on(LiveTranscriptionEvents.UtteranceEnd, partial(on_deepgram_utterance_end, call_sid=call_sid, latency_tracking=latency_tracking, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event))
     dg_conn.on(LiveTranscriptionEvents.Error, partial(on_deepgram_error, call_sid=call_sid, latency_tracking=latency_tracking))
     dg_conn.on(LiveTranscriptionEvents.Close, partial(on_deepgram_close, call_sid=call_sid, latency_tracking=latency_tracking))
-    dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # New handler for barge-in
+    dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # Pass agent_is_speaking_event
 
     try:
         # Initial Greeting
@@ -465,7 +491,7 @@ async def media_ws(websocket: WebSocket, call_sid: str):
                     interim_results=True, # Enable interim results for better human-like interaction
                     utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
                     vad_events=True, # Enable VAD events for SpeechStarted
-                    endpointing="750", # Reverted to a moderate VAD sensitivity to avoid ignoring short user utterances
+                    endpointing="1000", # Optimized VAD for background noise: 1000ms
                     filler_words=True # Enable filler word detection for more natural transcription
                 )
             )

@@ -1,4 +1,4 @@
-ALWAYS USE CONTEX BELOW 200K TOKEN!!!!!!!!!!!!!!!!1 Never guess API parameters – always match official docs.
+1. ALWAYS USE CONTEX BELOW 200K TOKEN!! Never guess API parameters – always match official docs.
 2. If Groq or SignalWire errors, log the full error and retry with fallback.
 3. Optimize all latency bottlenecks: STT, TTS, and Redis calls.
 4. System prompt for GROQ should be short, warm, voice-optimized.

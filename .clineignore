@@ -1,0 +1,91 @@
+# ==============================================================================
+# Cline Ignore File for AuraVoice Project (V2 - User Specified)
+#
+# This file tells the Cline AI Assistant what to IGNORE. This is critical for
+# reducing the context window size, staying within the free tier token limits,
+# and getting faster, more relevant responses from the AI.
+# ==============================================================================
+
+# --- Virtual Environments & Caches ---
+# These directories are massive, contain thousands of files, and are completely
+# irrelevant to the AI. This is the most important section.
+venv_prod/
+__pycache__/
+.pytest_cache/
+.vscode/
+
+# --- Large Media and Model Files ---
+# The AI doesn't need to READ these files; it interacts with them via your code.
+# Ignoring them saves hundreds of thousands of tokens.
+*.wav
+*.mp3
+*.onnx
+*.bin
+*.json
+local_stt_models/
+piper_models/
+
+# --- Temporary and Generated Audio Directories ---
+# These directories change constantly and contain generated assets, not source code.
+public_audio/
+public_optimized_audio/
+temp_raw_audio/
+
+# --- Secrets and Environment Variables ---
+# CRITICAL for security. Never send your .env file to the AI.
+.env
+
+# --- Documentation & Configuration ---
+# These are useful for you, but the AI doesn't need them in every prompt.
+# If you need to work on one, temporarily comment out the rule (add a #).
+*.md
+*.txt
+*.html
+*.js
+ARCHITECTURE.md
+DEPLOY_TO_RENDER.md
+GEMINI.md
+GROQ_TTS_TROUBLESHOOTING.md
+PRODUCTION_AUDIT_REPORT.md
+README.md
+SETUP_CDN.md
+directory_structure.txt
+RULES.TXT
+
+# --- Deployment & Build Files ---
+# Only un-ignore these if your task is specifically about fixing deployment.
+docker-compose.yml
+Dockerfile
+render.yaml
+*.sh
+
+# --- Deprecated, Old, or Utility Scripts ---
+# Ignoring these files keeps the AI focused on your main application logic.
+main_vosk_backup.py
+celery_worker/
+app.py # If main.py is the primary entrypoint
+relay_server.py
+relay_server_fixed.py
+audio_server.py
+check_env.py
+cleanup_redis.py
+click_to_call_server.py
+debug_monitor.py
+groq_pipeline.py
+groq_tts_test.py
+local_celery_test.py
+start_services.py
+tts_orchestrator.py
+tts_requirements.txt
+# This looks like a command accidentally saved as a file, good to ignore
+et --hard 25ca9d9~1
+
+# --- Specific Application Sub-directories ---
+# Ignore specific parts of the 'app' directory to focus the context.
+app/pipeline/
+app/utils/
+llm/
+
+# --- Git History ---
+# The AI does not need access to your Git history database.
+
