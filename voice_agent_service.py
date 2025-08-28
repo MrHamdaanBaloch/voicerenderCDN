@@ -10,16 +10,21 @@ import time # Added for latency measurement
 import aiofiles # Added for async file operations
 import uuid # Added for unique IDs for temporary files
 from typing import Optional, List
+from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, Request, Response, HTTPException
+from fastapi import FastAPI, WebSocket, Request, Response, HTTPException, Depends
 from starlette.websockets import WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.orm import Session
 
 from dotenv import load_dotenv
 from signalwire.voice_response import VoiceResponse
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 from groq import Groq
 import redis
+
+from app.database import get_db, Base, engine
+from app.models import Organization, Plan, User, Agent, Call, Transcript, APIKey
 
 # -------------------------------
 # Setup & Config
@@ -97,6 +102,64 @@ call_transcript_buffers = {}
 
 # Dictionary to hold WebSocket and stream_sid for each active call
 call_state = {}
+
+# -------------------------------
+# Database Initialization Helpers
+# -------------------------------
+async def get_or_create_default_saas_entities(db: Session):
+    """Ensures a default organization, plan, and agent exist for initial testing."""
+    default_org_name = "Default Organization"
+    default_plan_name = "Free Tier"
+    default_agent_name = "Default Voice Agent"
+
+    organization = db.query(Organization).filter(Organization.name == default_org_name).first()
+    if not organization:
+        organization = Organization(name=default_org_name, slug="default-org")
+        db.add(organization)
+        db.commit()
+        db.refresh(organization)
+        logger.info(f"Created default organization: {organization.name}")
+
+    plan = db.query(Plan).filter(Plan.name == default_plan_name).first()
+    if not plan:
+        plan = Plan(name=default_plan_name, description="Free tier plan", price_monthly=0.00, features={})
+        db.add(plan)
+        db.commit()
+        db.refresh(plan)
+        logger.info(f"Created default plan: {plan.name}")
+    
+    if not organization.plan_id:
+        organization.plan_id = plan.id
+        db.add(organization)
+        db.commit()
+        db.refresh(organization)
+        logger.info(f"Assigned default plan to default organization.")
+
+    agent = db.query(Agent).filter(Agent.name == default_agent_name, Agent.organization_id == organization.id).first()
+    if not agent:
+        agent = Agent(
+            organization_id=organization.id,
+            name=default_agent_name,
+            description="A default AI voice agent for testing.",
+            llm_model=LLM_MODEL,
+            tts_model=GROQ_TTS_MODEL,
+            tts_voice=GROQ_TTS_VOICE,
+            deepgram_model="nova-2-phonecall",
+            system_prompt=LLM_SYSTEM_PROMPT,
+            silence_timeout_seconds=SILENCE_TIMEOUT_SECONDS,
+            silence_prompt_text=SILENCE_PROMPT_TEXT,
+            deepgram_config={
+                "utterance_end_ms": "1000",
+                "endpointing": "1500",
+                "filler_words": True
+            }
+        )
+        db.add(agent)
+        db.commit()
+        db.refresh(agent)
+        logger.info(f"Created default agent: {agent.name} for organization {organization.name}")
+    
+    return organization, plan, agent
 
 # -------------------------------
 # TTS Logic & Helpers
@@ -355,7 +418,7 @@ async def root():
     return {"message": "OK: Voice Agent Service up"}
 
 @app.post("/incoming_call")
-async def incoming_call(request: Request):
+async def incoming_call(request: Request, db: Session = Depends(get_db)):
     """
     Respond with <Start><Stream> to route call audio to our WebSocket.
     """
@@ -367,8 +430,27 @@ async def incoming_call(request: Request):
     if not RENDER_EXTERNAL_URL:
         raise HTTPException(status_code=503, detail="RENDER_EXTERNAL_URL not set")
 
+    # Get or create default SAAS entities
+    organization, _, agent = await get_or_create_default_saas_entities(db)
+
+    # Create a new Call record in the database
+    db_call = Call(
+        call_sid=call_sid,
+        from_number=frm,
+        to_number=to,
+        agent_id=agent.id,
+        organization_id=organization.id,
+        start_time=datetime.utcnow(),
+        status="in_progress"
+    )
+    db.add(db_call)
+    db.commit()
+    db.refresh(db_call)
+    logger.info(f"[{call_sid}] Created new DB Call record with ID: {db_call.id}")
+
     host = RENDER_EXTERNAL_URL.replace("https://", "").replace("http://", "")
-    ws_url = f"wss://{host}/media/{call_sid}"
+    # Pass the database call_id to the WebSocket URL
+    ws_url = f"wss://{host}/media/{call_sid}?db_call_id={db_call.id}"
 
     logger.info(f"[{call_sid}] Using RENDER_EXTERNAL_URL: {RENDER_EXTERNAL_URL} for WebSocket URL: {ws_url}")
 
@@ -411,26 +493,43 @@ async def save_audio(call_sid: str):
 # WebSocket Route for SignalWire <Stream>
 # -------------------------------
 @app.websocket("/media/{call_sid}")
-async def media_ws(websocket: WebSocket, call_sid: str):
+async def media_ws(websocket: WebSocket, call_sid: str, db_call_id: uuid.UUID, db: Session = Depends(get_db)):
     await websocket.accept()
-    logger.info(f"🎙️ WebSocket accepted for call {call_sid}")
+    logger.info(f"🎙️ WebSocket accepted for call {call_sid} with DB Call ID: {db_call_id}")
 
     stream_sid: Optional[str] = None
     dump_key = f"audio_dump:{call_sid}"
     user_is_speaking_event = asyncio.Event() # Event to signal if user is speaking (for barge-in)
     agent_is_speaking_event = asyncio.Event() # Event to signal if agent is speaking (for interruption context)
 
-    # Store websocket and events in call_state
+    # Retrieve Call and Agent configuration from the database
+    db_call = db.query(Call).filter(Call.id == db_call_id).first()
+    if not db_call:
+        logger.error(f"[{call_sid}] DB Call ID {db_call_id} not found. Closing WebSocket.")
+        await websocket.close(code=1011) # Internal Error
+        return
+    
+    db_agent = db.query(Agent).filter(Agent.id == db_call.agent_id).first()
+    if not db_agent:
+        logger.error(f"[{call_sid}] Agent ID {db_call.agent_id} not found for call {db_call_id}. Closing WebSocket.")
+        await websocket.close(code=1011) # Internal Error
+        return
+
+    # Store websocket, events, and agent config in call_state
     call_state[call_sid] = {
         "websocket": websocket,
         "user_is_speaking_event": user_is_speaking_event,
         "agent_is_speaking_event": agent_is_speaking_event,
         "last_activity_time": time.time(), # Track last user or agent activity
         "stream_sid": None, # Will be populated once 'start' event is received
-        "messages": [{"role": "system", "content": LLM_SYSTEM_PROMPT}] # Initialize conversation history with system prompt
+        "messages": [{"role": "system", "content": db_agent.system_prompt}], # Initialize conversation history with agent's system prompt
+        "db_call_id": db_call_id,
+        "db_agent": db_agent, # Store agent object for dynamic configuration
+        "db_session": db # Store db session for transcript saving
     }
 
     logger.info(f"[{call_sid}] WebSocket endpoint URL: {str(websocket.url)}")
+    logger.info(f"[{call_sid}] Agent configuration loaded: LLM Model: {db_agent.llm_model}, TTS Voice: {db_agent.tts_voice}")
 
     # prepare Redis key
     if redis_client:
@@ -481,20 +580,20 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         try:
             dg_conn.start(
                 LiveOptions(
-                    model="nova-2-phonecall", # Changed to phonecall optimized model
+                    model=db_agent.deepgram_model, # Use agent's configured Deepgram model
                     language="en-US",
                     encoding="mulaw",    # SignalWire audio format
                     sample_rate=8000,     # SignalWire audio format
                     channels=1,
                     smart_format=True,
                     interim_results=True, # Enable interim results for better human-like interaction
-                    utterance_end_ms="1000", # Detect end of utterance after 1 second of silence for quicker responses (recommended by Deepgram)
+                    utterance_end_ms=db_agent.deepgram_config.get("utterance_end_ms", "1000"), # Use agent's configured utterance_end_ms
                     vad_events=True, # Enable VAD events for SpeechStarted
-                    endpointing="1500", # Further optimized VAD for background noise: 1500ms
-                    filler_words=True # Enable filler word detection for more natural transcription
+                    endpointing=db_agent.deepgram_config.get("endpointing", "1500"), # Use agent's configured endpointing
+                    filler_words=db_agent.deepgram_config.get("filler_words", True) # Use agent's configured filler_words
                 )
             )
-            logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting")
+            logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting with agent config.")
             # Reset last activity time AFTER Deepgram has started listening
             if call_sid in call_state:
                 call_state[call_sid]["last_activity_time"] = time.time()
@@ -570,6 +669,22 @@ async def media_ws(websocket: WebSocket, call_sid: str):
         logger.info(f"[{call_sid}] WebSocket closed")
         # Clean up call state
         if call_sid in call_state:
+            # Update call record in DB
+            db_session = call_state[call_sid].get("db_session")
+            db_call_id = call_state[call_sid].get("db_call_id")
+            if db_session and db_call_id:
+                try:
+                    db_call = db_session.query(Call).filter(Call.id == db_call_id).first()
+                    if db_call:
+                        db_call.end_time = datetime.utcnow()
+                        db_call.duration_seconds = int((db_call.end_time - db_call.start_time).total_seconds())
+                        db_call.status = "completed"
+                        db_session.add(db_call)
+                        db_session.commit()
+                        logger.info(f"[{call_sid}] Updated DB Call record {db_call_id} to 'completed'. Duration: {db_call.duration_seconds}s")
+                except Exception as db_e:
+                    logger.error(f"[{call_sid}] Failed to update DB Call record {db_call_id} on WebSocket close: {db_e}")
+            
             del call_state[call_sid]
             logger.info(f"[{call_sid}] Cleaned up call state.")
 
@@ -591,16 +706,20 @@ async def silence_detection_task():
             user_is_speaking = state["user_is_speaking_event"].is_set()
             agent_is_speaking = state["agent_is_speaking_event"].is_set()
             last_activity_time = state["last_activity_time"]
+            db_agent = state.get("db_agent")
 
-            if not websocket or not stream_sid:
-                continue # Skip if WebSocket or stream_sid is not yet established
+            if not websocket or not stream_sid or not db_agent:
+                continue # Skip if WebSocket, stream_sid, or agent config is not yet established
+
+            silence_timeout = db_agent.silence_timeout_seconds
+            silence_prompt = db_agent.silence_prompt_text
 
             if not user_is_speaking and not agent_is_speaking:
                 silence_duration = current_time - last_activity_time
-                if silence_duration >= SILENCE_TIMEOUT_SECONDS:
+                if silence_duration >= silence_timeout:
                     logger.info(f"[{call_sid}] Detected {silence_duration:.2f}s of silence. Sending proactive prompt.")
                     try:
-                        prompt_audio_bytes = await generate_tts_mulaw_bytes_for_stream(SILENCE_PROMPT_TEXT, call_sid)
+                        prompt_audio_bytes = await generate_tts_mulaw_bytes_for_stream(silence_prompt, call_sid)
                         await send_audio_payload_chunked(
                             websocket,
                             stream_sid,
@@ -650,22 +769,56 @@ async def process_transcripts_with_groq():
                     transcript_queue.task_done()
                     continue
 
+                db_agent = current_call_state.get("db_agent")
+                db_call_id = current_call_state.get("db_call_id")
+                db_session = current_call_state.get("db_session")
+
+                if not db_agent or not db_call_id or not db_session:
+                    logger.error(f"[{call_sid}] Missing DB agent, call ID, or session in call_state. Cannot process with Groq or save transcript.")
+                    transcript_queue.task_done()
+                    continue
+
                 messages = current_call_state.get("messages", [])
                 # Ensure system prompt is always the first message if not already present
                 if not messages or messages[0]["role"] != "system":
-                    messages.insert(0, {"role": "system", "content": LLM_SYSTEM_PROMPT})
+                    messages.insert(0, {"role": "system", "content": db_agent.system_prompt}) # Use agent's system prompt
                 
                 messages.append({"role": "user", "content": user_content})
 
+                # Save user transcript to DB
+                db_transcript_user = Transcript(
+                    call_id=db_call_id,
+                    speaker="user",
+                    text=transcript,
+                    timestamp=datetime.utcnow() # Consider using deepgram_utterance_end_time for more accuracy
+                )
+                db_session.add(db_transcript_user)
+                db_session.commit()
+                db_session.refresh(db_transcript_user)
+                logger.info(f"[{call_sid}] Saved user transcript to DB: {db_transcript_user.id}")
+
+
                 chat_completion = groq_client.chat.completions.create(
                     messages=messages, # Use the conversation history
-                    model=LLM_MODEL, # Use configurable LLM model
+                    model=db_agent.llm_model, # Use configurable LLM model from agent
                 )
                 groq_response_time = time.time()
                 groq_response = chat_completion.choices[0].message.content
                 
                 # Append agent's response to conversation history
                 messages.append({"role": "assistant", "content": groq_response})
+
+                # Save agent transcript to DB
+                db_transcript_agent = Transcript(
+                    call_id=db_call_id,
+                    speaker="agent",
+                    text=groq_response,
+                    timestamp=datetime.utcnow()
+                )
+                db_session.add(db_transcript_agent)
+                db_session.commit()
+                db_session.refresh(db_transcript_agent)
+                logger.info(f"[{call_sid}] Saved agent response to DB: {db_transcript_agent.id}")
                 
                 # Measure Groq API latency
                 groq_api_latency = (groq_response_time - groq_request_start_time) * 1000
@@ -678,8 +831,6 @@ async def process_transcripts_with_groq():
                 # Retrieve websocket and stream_sid from call_state
                 current_call_state = call_state.get(call_sid)
                 if current_call_state and current_call_state.get("websocket") and current_call_state.get("stream_sid"):
-                    websocket_for_call = current_call_state["websocket"]
-                    stream_sid_for_call = current_call_state["stream_sid"]
                     websocket_for_call = current_call_state["websocket"]
                     stream_sid_for_call = current_call_state["stream_sid"]
                     user_is_speaking_event_for_call = current_call_state["user_is_speaking_event"]
@@ -717,9 +868,10 @@ async def process_transcripts_with_groq():
 # -------------------------------
 @app.on_event("startup")
 async def startup_event():
+    Base.metadata.create_all(bind=engine) # Create database tables
     asyncio.create_task(process_transcripts_with_groq())
     asyncio.create_task(silence_detection_task()) # Start the silence detection task
-    logger.info("Voice Agent Service started.")
+    logger.info("Voice Agent Service started and database tables created.")
 
 @app.on_event("shutdown")
 async def shutdown_event():
