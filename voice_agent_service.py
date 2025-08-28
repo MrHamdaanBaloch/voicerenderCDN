@@ -103,6 +103,9 @@ call_transcript_buffers = {}
 # Dictionary to hold WebSocket and stream_sid for each active call
 call_state = {}
 
+# Global variable to store pre-generated greeting audio
+pre_generated_greeting_audio_bytes: Optional[bytes] = None
+
 # -------------------------------
 # Database Initialization Helpers
 # -------------------------------
@@ -430,14 +433,40 @@ async def incoming_call(request: Request, db: Session = Depends(get_db)):
     if not RENDER_EXTERNAL_URL:
         raise HTTPException(status_code=503, detail="RENDER_EXTERNAL_URL not set")
 
-    # Get or create default SAAS entities
-    organization, _, agent = await get_or_create_default_saas_entities(db)
+    # Extract the 'To' number from the incoming call
+    to_number = form.get("To")
+    if not to_number:
+        logger.error(f"[{call_sid}] Incoming call missing 'To' number.")
+        raise HTTPException(status_code=400, detail="Missing 'To' number in incoming call.")
+
+    # Attempt to find an agent associated with the 'To' number
+    agent = db.query(Agent).filter(Agent.signalwire_phone_number == to_number).first()
+
+    if not agent:
+        logger.warning(f"[{call_sid}] No specific agent found for 'To' number: {to_number}. Falling back to default agent.")
+        # Fallback to default agent if no specific agent is found
+        default_organization = db.query(Organization).filter(Organization.name == "Default Organization").first()
+        default_agent = db.query(Agent).filter(Agent.name == "Default Voice Agent", Agent.organization_id == default_organization.id).first()
+
+        if not default_organization or not default_agent:
+            logger.error(f"[{call_sid}] Default organization or agent not found. Startup pre-warming might have failed.")
+            raise HTTPException(status_code=500, detail="Server not fully initialized. Default agent/organization missing.")
+        
+        agent = default_agent
+        organization = default_organization
+        logger.info(f"[{call_sid}] Using default agent: {agent.name} for organization: {organization.name}")
+    else:
+        organization = db.query(Organization).filter(Organization.id == agent.organization_id).first()
+        if not organization:
+            logger.error(f"[{call_sid}] Organization {agent.organization_id} not found for agent {agent.name}. This indicates a data inconsistency.")
+            raise HTTPException(status_code=500, detail="Agent's organization not found.")
+        logger.info(f"[{call_sid}] Found agent: {agent.name} for 'To' number: {to_number} in organization: {organization.name}")
 
     # Create a new Call record in the database
     db_call = Call(
         call_sid=call_sid,
         from_number=frm,
-        to_number=to,
+        to_number=to_number, # Use the extracted to_number
         agent_id=agent.id,
         organization_id=organization.id,
         start_time=datetime.utcnow(),
@@ -553,12 +582,34 @@ async def media_ws(websocket: WebSocket, call_sid: str, db_call_id: uuid.UUID, d
     dg_conn.on(LiveTranscriptionEvents.SpeechStarted, partial(on_deepgram_speech_started, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)) # Pass agent_is_speaking_event
 
     try:
-        # Initial Greeting
-        greeting_text = "Hello! Welcome to the voice agent. How can I help you today?"
-        greeting_audio_bytes = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
-        logger.info(f"[{call_sid}] Initial greeting audio bytes length: {len(greeting_audio_bytes)}") # Log greeting audio length
+        # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames *IMMEDIATELY*
+        try:
+            dg_conn.start(
+                LiveOptions(
+                    model=db_agent.deepgram_model,
+                    language="en-US",
+                    encoding="mulaw",
+                    sample_rate=8000,
+                    channels=1,
+                    smart_format=True,
+                    interim_results=True,
+                    utterance_end_ms=db_agent.deepgram_config.get("utterance_end_ms", "1000"),
+                    vad_events=True,
+                    endpointing=db_agent.deepgram_config.get("endpointing", "1500"),
+                    filler_words=db_agent.deepgram_config.get("filler_words", True)
+                )
+            )
+            logger.info(f"[{call_sid}] Deepgram START requested immediately with agent config.")
+            if call_sid in call_state:
+                call_state[call_sid]["last_activity_time"] = time.time() # Reset activity time
+                logger.info(f"[{call_sid}] Reset last_activity_time after Deepgram START.")
+        except Exception as e:
+            logger.exception(f"[{call_sid}] Failed to start Deepgram immediately: {e}")
+            dg_conn = None
+            await websocket.close(code=1011) # Close if Deepgram fails to start
+            return
 
-        # Wait for SignalWire 'start' event to get stream_sid before sending outbound audio
+        # Wait for SignalWire 'start' event to get stream_sid
         while not stream_sid:
             raw_msg = await websocket.receive_text()
             msg = json.loads(raw_msg)
@@ -571,36 +622,23 @@ async def media_ws(websocket: WebSocket, call_sid: str, db_call_id: uuid.UUID, d
             else:
                 logger.debug(f"[{call_sid}] Received {event} while waiting for 'start' event.")
 
-        if stream_sid:
-            await send_audio_payload_chunked(websocket, stream_sid, greeting_audio_bytes, call_sid=call_sid, user_is_speaking_event=user_is_speaking_event, agent_is_speaking_event=agent_is_speaking_event)
-        else:
-            logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
-
-        # Start Deepgram with μ-law / 8 kHz to match SignalWire media frames *AFTER* greeting
-        try:
-            dg_conn.start(
-                LiveOptions(
-                    model=db_agent.deepgram_model, # Use agent's configured Deepgram model
-                    language="en-US",
-                    encoding="mulaw",    # SignalWire audio format
-                    sample_rate=8000,     # SignalWire audio format
-                    channels=1,
-                    smart_format=True,
-                    interim_results=True, # Enable interim results for better human-like interaction
-                    utterance_end_ms=db_agent.deepgram_config.get("utterance_end_ms", "1000"), # Use agent's configured utterance_end_ms
-                    vad_events=True, # Enable VAD events for SpeechStarted
-                    endpointing=db_agent.deepgram_config.get("endpointing", "1500"), # Use agent's configured endpointing
-                    filler_words=db_agent.deepgram_config.get("filler_words", True) # Use agent's configured filler_words
+        # Play pre-generated greeting concurrently if available
+        if stream_sid and pre_generated_greeting_audio_bytes:
+            logger.info(f"[{call_sid}] Streaming pre-generated greeting audio.")
+            asyncio.create_task(
+                send_audio_payload_chunked(
+                    websocket,
+                    stream_sid,
+                    pre_generated_greeting_audio_bytes,
+                    call_sid=call_sid,
+                    user_is_speaking_event=user_is_speaking_event,
+                    agent_is_speaking_event=agent_is_speaking_event
                 )
             )
-            logger.info(f"[{call_sid}] Deepgram START requested AFTER greeting with agent config.")
-            # Reset last activity time AFTER Deepgram has started listening
-            if call_sid in call_state:
-                call_state[call_sid]["last_activity_time"] = time.time()
-                logger.info(f"[{call_sid}] Reset last_activity_time after Deepgram START.")
-        except Exception as e:
-            logger.exception(f"[{call_sid}] Failed to start Deepgram after greeting: {e}")
-            dg_conn = None
+        elif stream_sid:
+            logger.warning(f"[{call_sid}] Pre-generated greeting audio not available, skipping initial greeting.")
+        else:
+            logger.error(f"[{call_sid}] Failed to get stream_sid, cannot play welcome message.")
 
         # Main loop to process incoming media from SignalWire
         while True:
@@ -869,6 +907,26 @@ async def process_transcripts_with_groq():
 @app.on_event("startup")
 async def startup_event():
     Base.metadata.create_all(bind=engine) # Create database tables
+    
+    # Initialize a temporary DB session to pre-warm default SAAS entities
+    db_session = next(get_db())
+    try:
+        await get_or_create_default_saas_entities(db_session)
+    finally:
+        db_session.close()
+
+    # Pre-generate initial greeting audio
+    global pre_generated_greeting_audio_bytes
+    try:
+        # Use a dummy call_sid for pre-generation as it's not tied to an active call yet
+        pre_generated_greeting_audio_bytes = await generate_tts_mulaw_bytes_for_stream(
+            "Hello! Welcome to the voice agent. How can I help you today?", "startup_greeting"
+        )
+        logger.info("Pre-generated initial greeting audio successfully.")
+    except Exception as e:
+        logger.error(f"Failed to pre-generate greeting audio: {e}")
+        pre_generated_greeting_audio_bytes = None # Ensure it's None if generation fails
+
     asyncio.create_task(process_transcripts_with_groq())
     asyncio.create_task(silence_detection_task()) # Start the silence detection task
     logger.info("Voice Agent Service started and database tables created.")

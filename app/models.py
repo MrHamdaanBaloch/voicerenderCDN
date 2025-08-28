@@ -75,6 +75,7 @@ class Agent(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     is_active = Column(Boolean, default=True)
+    signalwire_phone_number = Column(String, nullable=True, unique=True, index=True)
 
     organization = relationship("Organization", back_populates="agents")
     calls = relationship("Call", back_populates="agent")
