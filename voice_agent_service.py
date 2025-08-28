@@ -906,6 +906,9 @@ async def process_transcripts_with_groq():
 # -------------------------------
 @app.on_event("startup")
 async def startup_event():
+    # WARNING: This will drop all existing tables and recreate them.
+    # Use this for development/testing only, or if you understand the implications.
+    Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine) # Create database tables
     
     # Initialize a temporary DB session to pre-warm default SAAS entities
