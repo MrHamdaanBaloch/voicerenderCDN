@@ -96,7 +96,7 @@ class Call(Base):
     transcript_url = Column(String, nullable=True) # S3 URL for full transcript
     audio_url = Column(String, nullable=True) # S3 URL for full audio recording
     cost = Column(Numeric(10, 4), nullable=True) # Calculated cost of the call
-    metadata = Column(JSONB, nullable=False, default={}) # Additional call-specific data
+    call_metadata = Column(JSONB, nullable=False, default={}) # Additional call-specific data
 
     agent = relationship("Agent", back_populates="calls")
     user = relationship("User", back_populates="calls")
