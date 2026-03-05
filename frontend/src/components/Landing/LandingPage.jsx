@@ -18,6 +18,7 @@ import {
   Infinity,
   ZapOff
 } from 'lucide-react';
+import SparklesCursor from '../effects/SparklesCursor';
 
 const LandingPage = () => {
   const [isPlaying, setIsPlaying] = useState(false);
@@ -106,6 +107,8 @@ const LandingPage = () => {
 
   return (
     <div className="min-h-screen bg-brand-black text-brand-white selection:bg-brand-violet selection:text-white">
+      {/* Sparkle cursor effect */}
+      <SparklesCursor />
       {/* Navigation */}
       <nav className="sticky top-0 z-50 glass-dark border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
