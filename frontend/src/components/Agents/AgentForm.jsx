@@ -21,7 +21,11 @@ import {
   TestTube,
   Zap,
   Cpu,
-  ShieldCheck
+  ShieldCheck,
+  ArrowRight,
+  ChevronLeft,
+  ChevronRight,
+  Check
 } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/use-toast';
@@ -56,6 +60,15 @@ const AgentForm = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
+
+  const tabOrder = ['basic', 'voice', 'advanced', 'phone'];
+  const tabLabels = { basic: 'Identity', voice: 'Vocal/AI', advanced: 'Neural', phone: 'Gateway' };
+  const tabIcons = { basic: Bot, voice: Mic, advanced: SettingsIcon, phone: Phone };
+  const currentStepIndex = tabOrder.indexOf(activeTab);
+  const isFirstStep = currentStepIndex === 0;
+  const isLastStep = currentStepIndex === tabOrder.length - 1;
+  const goNext = () => !isLastStep && setActiveTab(tabOrder[currentStepIndex + 1]);
+  const goPrev = () => !isFirstStep && setActiveTab(tabOrder[currentStepIndex - 1]);
 
   const llmModels = [
     { value: 'llama3-8b-8192', label: 'Llama 3 8B (Fast)' },
@@ -253,6 +266,29 @@ const AgentForm = () => {
               Gateway
             </TabsTrigger>
           </TabsList>
+
+          {/* Step Progress Indicator */}
+          <div className="mt-6 mb-2">
+            <div className="flex items-center justify-between mb-3">
+              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
+                Step {currentStepIndex + 1} of {tabOrder.length}
+              </span>
+              <span className="text-[10px] font-bold text-brand-violet uppercase tracking-widest">
+                {tabLabels[activeTab]}
+              </span>
+            </div>
+            <div className="flex gap-2">
+              {tabOrder.map((tab, i) => (
+                <div
+                  key={tab}
+                  className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${i <= currentStepIndex
+                      ? 'bg-brand-violet shadow-[0_0_8px_rgba(108,99,255,0.4)]'
+                      : 'bg-white/10'
+                    }`}
+                />
+              ))}
+            </div>
+          </div>
 
           <TabsContent value="basic" className="mt-8">
             <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
@@ -529,6 +565,52 @@ const AgentForm = () => {
             </Card>
           </TabsContent>
         </Tabs>
+
+        {/* Next / Previous Navigation */}
+        <div className="flex items-center justify-between mt-8 pt-6 border-t border-white/5">
+          <Button
+            type="button"
+            variant="ghost"
+            onClick={goPrev}
+            disabled={isFirstStep}
+            className={`h-14 px-8 rounded-2xl font-bold text-sm transition-all ${isFirstStep
+                ? 'opacity-30 cursor-not-allowed text-gray-600'
+                : 'text-white bg-white/5 border border-white/10 hover:bg-white/10 hover:border-brand-violet/50'
+              }`}
+          >
+            <ChevronLeft className="w-5 h-5 mr-2" />
+            Previous: {!isFirstStep ? tabLabels[tabOrder[currentStepIndex - 1]] : ''}
+          </Button>
+
+          {isLastStep ? (
+            <Button
+              type="submit"
+              disabled={isSaving || !formData.name}
+              className="h-14 px-10 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold text-sm transition-all active:scale-[0.98]"
+            >
+              {isSaving ? (
+                <>
+                  <div className="w-5 h-5 mr-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                  Deploying...
+                </>
+              ) : (
+                <>
+                  <Check className="w-5 h-5 mr-2" />
+                  {isEditing ? 'Save Parameters' : 'Deploy Agent'}
+                </>
+              )}
+            </Button>
+          ) : (
+            <Button
+              type="button"
+              onClick={goNext}
+              className="h-14 px-8 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold text-sm transition-all active:scale-[0.98]"
+            >
+              Next: {tabLabels[tabOrder[currentStepIndex + 1]]}
+              <ChevronRight className="w-5 h-5 ml-2" />
+            </Button>
+          )}
+        </div>
       </form>
     </div>
   );
