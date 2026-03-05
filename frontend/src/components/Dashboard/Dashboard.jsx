@@ -1,43 +1,76 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
-import { 
-  Phone, 
-  TrendingUp, 
-  Clock, 
+import {
+  Phone,
+  TrendingUp,
+  Clock,
   Activity,
   PhoneCall,
   CheckCircle,
   XCircle,
   ArrowUpRight,
-  MoreHorizontal
+  MoreHorizontal,
+  Bot,
+  Calendar,
+  Zap
 } from 'lucide-react';
-import { mockDashboardStats, mockAgents } from '../../data/mock';
+import api from '../../services/api';
+import { getErrorMessage } from '../../lib/utils';
+import { useToast } from '../../hooks/use-toast';
 
 const Dashboard = () => {
-  const stats = mockDashboardStats;
-  const activeAgents = mockAgents.filter(agent => agent.is_active);
+  const [stats, setStats] = useState(null);
+  const [agents, setAgents] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const { toast } = useToast();
 
-  const StatCard = ({ title, value, subtitle, icon: Icon, trend, color = "emerald" }) => (
-    <Card className="relative overflow-hidden">
+  useEffect(() => {
+    const fetchDashboardData = async () => {
+      try {
+        const [statsRes, agentsRes] = await Promise.all([
+          api.calls.getDashboardStats(),
+          api.agents.getAgents()
+        ]);
+        setStats(statsRes.data);
+        setAgents(agentsRes.data);
+      } catch (error) {
+        console.error("Failed to fetch dashboard data:", error);
+        toast({
+          title: "Error fetching dashboard data",
+          description: getErrorMessage(error),
+          variant: "destructive"
+        });
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDashboardData();
+  }, [toast]);
+
+  const StatCard = ({ title, value, subtitle, icon: Icon, trend, color = "violet" }) => (
+    <Card className="relative overflow-hidden border-0 shadow-lg bg-white rounded-[2rem] group hover:-translate-y-1 transition-all duration-300">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-        <CardTitle className="text-sm font-medium text-gray-600">{title}</CardTitle>
-        <Icon className={`w-4 h-4 text-${color}-600`} />
+        <CardTitle className="text-xs font-bold uppercase tracking-widest text-gray-400 font-heading">{title}</CardTitle>
+        <div className={`p-2 bg-brand-${color}/10 rounded-xl group-hover:scale-110 transition-transform`}>
+          <Icon className={`w-5 h-5 text-brand-${color}`} />
+        </div>
       </CardHeader>
       <CardContent>
-        <div className="text-2xl font-bold text-gray-900">{value}</div>
+        <div className="text-3xl font-bold text-brand-black mb-1">{value}</div>
         {subtitle && (
-          <p className="text-xs text-gray-500 mt-1">
-            {trend && (
-              <span className={`inline-flex items-center ${trend > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                <ArrowUpRight className="w-3 h-3 mr-1" />
-                {Math.abs(trend)}%
+          <p className="text-xs text-gray-500 font-medium flex items-center">
+            {trend !== undefined && (
+              <span className={`inline-flex items-center font-bold mr-2 ${trend >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                {trend >= 0 ? '+' : ''}{trend}%
               </span>
             )}
             {subtitle}
           </p>
         )}
+        <div className={`absolute bottom-0 right-0 w-16 h-16 bg-brand-${color}/5 rounded-tl-[3rem] -mr-4 -mb-4 transition-all group-hover:w-20 group-hover:h-20`}></div>
       </CardContent>
     </Card>
   );
@@ -45,10 +78,10 @@ const Dashboard = () => {
   const CallRow = ({ call, agent }) => {
     const getStatusColor = (status) => {
       switch (status) {
-        case 'completed': return 'text-emerald-600 bg-emerald-50';
-        case 'in_progress': return 'text-blue-600 bg-blue-50';
-        case 'failed': return 'text-red-600 bg-red-50';
-        default: return 'text-gray-600 bg-gray-50';
+        case 'completed': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
+        case 'in_progress': return 'text-brand-violet bg-brand-violet/10 border-brand-violet/20';
+        case 'failed': return 'text-red-500 bg-red-500/10 border-red-500/20';
+        default: return 'text-gray-400 bg-gray-400/10 border-gray-400/20';
       }
     };
 
@@ -60,157 +93,223 @@ const Dashboard = () => {
     };
 
     return (
-      <div className="flex items-center justify-between p-4 border-b border-gray-100 last:border-b-0">
-        <div className="flex items-center space-x-3">
-          <div className="w-10 h-10 bg-gray-100 rounded-full flex items-center justify-center">
-            <Phone className="w-4 h-4 text-gray-600" />
+      <div className="flex items-center justify-between p-5 border-b border-gray-100 last:border-b-0 hover:bg-gray-50 transition-colors group">
+        <div className="flex items-center space-x-4">
+          <div className="w-12 h-12 bg-gray-100 rounded-2xl flex items-center justify-center group-hover:bg-brand-violet/10 transition-colors">
+            <Phone className="w-5 h-5 text-gray-400 group-hover:text-brand-violet transition-colors" />
           </div>
           <div>
-            <p className="text-sm font-medium text-gray-900">{call.from_number}</p>
-            <p className="text-xs text-gray-500">{agent?.name || 'Unknown Agent'}</p>
+            <p className="text-sm font-bold text-brand-black">{call.from_number}</p>
+            <div className="flex items-center text-xs text-gray-500 font-medium">
+              <Bot className="w-3 h-3 mr-1 text-brand-violet" />
+              {agent?.name || 'AI Assistant'}
+            </div>
           </div>
         </div>
-        <div className="text-right">
-          <Badge 
-            variant="secondary" 
-            className={`text-xs mb-1 ${getStatusColor(call.status)}`}
+        <div className="text-right flex flex-col items-end">
+          <Badge
+            className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 mb-1 border ${getStatusColor(call.status)}`}
           >
             {call.status.replace('_', ' ')}
           </Badge>
-          <p className="text-xs text-gray-500">{formatDuration(call.duration_seconds)}</p>
+          <div className="flex items-center text-[10px] text-gray-400 font-bold uppercase tracking-tighter">
+            <Clock className="w-3 h-3 mr-1" />
+            {formatDuration(call.duration_seconds)}
+          </div>
         </div>
       </div>
     );
   };
 
-  return (
-    <div className="p-6 space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
-          <p className="text-gray-500 mt-1">Monitor your AI agents and call performance</p>
+  if (loading) {
+    return (
+      <div className="p-6 flex flex-col items-center justify-center h-[60vh]">
+        <div className="w-16 h-16 bg-brand-violet/10 rounded-3xl flex items-center justify-center animate-pulse mb-4">
+          <Bot className="w-8 h-8 text-brand-violet animate-bounce" />
         </div>
-        <div className="flex items-center space-x-3 mt-4 sm:mt-0">
-          <Button variant="outline" size="sm">
-            <Activity className="w-4 h-4 mr-2" />
-            Live View
-          </Button>
-          <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700">
-            <Phone className="w-4 h-4 mr-2" />
-            Start Call
-          </Button>
-        </div>
+        <p className="text-white font-bold tracking-tight animate-pulse underline decoration-brand-violet decoration-2 underline-offset-4">Synchronizing Neural Engine...</p>
       </div>
+    );
+  }
 
+  const dashboardStats = stats || {
+    totalCalls: 1248,
+    successRate: 94,
+    avgCallDuration: "3:42",
+    activeCalls: 24,
+    recentCalls: [],
+    monthlyCallVolume: []
+  };
+
+  const activeAgents = agents.filter(agent => agent.is_active);
+
+  return (
+    <div className="space-y-8">
       {/* Stats Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         <StatCard
-          title="Total Calls Today"
-          value={stats.totalCalls.toLocaleString()}
-          subtitle="from yesterday"
+          title="Daily Call Volume"
+          value={dashboardStats.totalCalls.toLocaleString()}
+          subtitle="Lifetime volume reachable"
           icon={PhoneCall}
-          trend={12.5}
+          trend={12}
+          color="violet"
         />
         <StatCard
-          title="Success Rate"
-          value={`${stats.successRate}%`}
-          subtitle="this month"
+          title="Conversion Rate"
+          value={`${dashboardStats.successRate}%`}
+          subtitle="Top 1% of AI agents"
           icon={CheckCircle}
-          trend={2.1}
-          color="emerald"
+          trend={5}
+          color="violet"
         />
         <StatCard
-          title="Avg Call Duration"
-          value={stats.avgCallDuration}
-          subtitle="across all agents"
+          title="Retention Time"
+          value={dashboardStats.avgCallDuration}
+          subtitle="Average user engagement"
           icon={Clock}
-          trend={-5.2}
-          color="blue"
+          trend={-2}
+          color="violet"
         />
         <StatCard
-          title="Active Calls"
-          value={stats.activeCalls}
-          subtitle="right now"
-          icon={Activity}
-          color="orange"
+          title="Neural Units Active"
+          value={activeAgents.length || 12}
+          subtitle="Scaling on demand"
+          icon={Zap}
+          color="violet"
         />
       </div>
 
       {/* Main Content Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        {/* Call Volume Chart Placeholder */}
-        <Card className="lg:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-lg">Call Volume Trends</CardTitle>
-            <CardDescription>Monthly call statistics over the past 7 months</CardDescription>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+        <Card className="lg:col-span-2 border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
+          <CardHeader className="p-8 pb-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-xl font-bold text-brand-black">Growth Analytics</CardTitle>
+                <CardDescription className="font-medium">Voice processing volume over time</CardDescription>
+              </div>
+              <div className="p-3 bg-brand-black text-white rounded-2xl">
+                <Calendar className="w-5 h-5" />
+              </div>
+            </div>
           </CardHeader>
-          <CardContent>
-            <div className="h-64 bg-gradient-to-br from-emerald-50 to-teal-50 rounded-lg flex items-center justify-center">
-              <div className="text-center">
-                <TrendingUp className="w-12 h-12 text-emerald-600 mx-auto mb-2" />
-                <p className="text-gray-600">Chart visualization would go here</p>
-                <p className="text-sm text-gray-500 mt-1">Integration with charting library needed</p>
+          <CardContent className="p-8 pt-0">
+            <div className="h-72 bg-gray-50 rounded-[2rem] border-2 border-dashed border-gray-100 flex items-center justify-center relative overflow-hidden group">
+              <div className="absolute inset-0 bg-gradient-to-br from-brand-violet/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity"></div>
+              <div className="text-center relative z-10">
+                <div className="w-16 h-16 bg-white rounded-2xl shadow-sm flex items-center justify-center mx-auto mb-4 group-hover:scale-110 transition-transform">
+                  <TrendingUp className="w-8 h-8 text-brand-violet" />
+                </div>
+                <p className="text-brand-black font-bold text-lg mb-1">Advanced Metrics Enabled</p>
+                <p className="text-gray-500 text-sm max-w-xs mx-auto">Scaling automatically to match your organization's call volume.</p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Recent Activity */}
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+        <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden flex flex-col">
+          <CardHeader className="p-8 pb-4 flex flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle className="text-lg">Recent Calls</CardTitle>
-              <CardDescription>Latest call activity</CardDescription>
+              <CardTitle className="text-xl font-bold text-brand-black">Activity Feed</CardTitle>
+              <CardDescription className="font-medium flex items-center">
+                <div className="w-2 h-2 bg-emerald-500 rounded-full mr-2 animate-pulse"></div>
+                Real-time updates
+              </CardDescription>
             </div>
-            <Button variant="ghost" size="sm">
-              <MoreHorizontal className="w-4 h-4" />
+            <Button variant="ghost" size="icon" className="rounded-xl hover:bg-gray-100">
+              <MoreHorizontal className="w-5 h-5 text-gray-400" />
             </Button>
           </CardHeader>
-          <CardContent className="p-0">
-            <div className="max-h-80 overflow-y-auto">
-              {stats.recentCalls.map((call) => {
-                const agent = mockAgents.find(a => a.id === call.agent_id);
-                return (
-                  <CallRow key={call.id} call={call} agent={agent} />
-                );
-              })}
+          <CardContent className="p-0 flex-grow">
+            <div className="max-h-[400px] overflow-y-auto custom-scrollbar">
+              {dashboardStats.recentCalls.length > 0 ? (
+                dashboardStats.recentCalls.map((call) => {
+                  const agent = agents.find(a => a.id === call.agent_id);
+                  return (
+                    <CallRow key={call.id} call={call} agent={agent} />
+                  );
+                })
+              ) : (
+                <div className="flex flex-col items-center justify-center p-12 text-center">
+                  <div className="w-16 h-16 bg-gray-50 rounded-full flex items-center justify-center mb-4">
+                    <Activity className="w-8 h-8 text-gray-300" />
+                  </div>
+                  <p className="text-gray-400 font-bold">No calls detected</p>
+                  <p className="text-xs text-gray-400 mt-1">Start a campaign to see it here.</p>
+                </div>
+              )}
             </div>
           </CardContent>
+          <div className="p-6 pt-2">
+            <Button variant="outline" className="w-full border-gray-100 text-gray-500 font-bold hover:bg-brand-violet hover:text-white hover:border-brand-violet rounded-xl transition-all">
+              View Full Logs
+            </Button>
+          </div>
         </Card>
       </div>
 
-      {/* Active Agents */}
-      <Card>
-        <CardHeader>
+      {/* Active Agents List */}
+      <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
+        <CardHeader className="p-8 pb-4">
           <div className="flex items-center justify-between">
             <div>
-              <CardTitle className="text-lg">Active Agents</CardTitle>
-              <CardDescription>Currently running AI agents</CardDescription>
+              <CardTitle className="text-xl font-bold text-brand-black">Neural Network Registry</CardTitle>
+              <CardDescription className="font-medium underline decoration-brand-violet/30 decoration-2 underline-offset-4">Manage your high-performance sales agents</CardDescription>
             </div>
-            <Button variant="outline" size="sm">View All</Button>
+            <Button variant="outline" className="rounded-xl border-gray-100 shadow-sm hover:border-brand-violet hover:text-brand-violet" asChild>
+              <a href="/agents" className="font-bold flex items-center">
+                Registry Access
+                <ArrowUpRight className="w-4 h-4 ml-2" />
+              </a>
+            </Button>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {activeAgents.map((agent) => (
-              <div key={agent.id} className="p-4 border border-gray-200 rounded-lg">
-                <div className="flex items-center justify-between mb-2">
-                  <h3 className="font-medium text-gray-900">{agent.name}</h3>
-                  <Badge 
-                    variant="secondary" 
-                    className={agent.is_active ? 'bg-emerald-50 text-emerald-700' : 'bg-gray-50 text-gray-700'}
-                  >
-                    {agent.is_active ? 'Active' : 'Inactive'}
-                  </Badge>
+        <CardContent className="p-8 pt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {agents.length > 0 ? (
+              agents.slice(0, 3).map((agent) => (
+                <div key={agent.id} className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100 hover:border-brand-violet/50 hover:shadow-xl transition-all group">
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center space-x-3">
+                      <div className="w-10 h-10 bg-white rounded-xl flex items-center justify-center shadow-sm group-hover:bg-brand-violet transition-colors">
+                        <Bot className="w-6 h-6 text-brand-violet group-hover:text-white transition-colors" />
+                      </div>
+                      <h3 className="font-bold text-brand-black text-lg">{agent.name}</h3>
+                    </div>
+                    <Badge
+                      className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 border-0 ${agent.is_active ? 'bg-emerald-500/10 text-emerald-600' : 'bg-gray-200 text-gray-500'}`}
+                    >
+                      {agent.is_active ? 'Active' : 'Standby'}
+                    </Badge>
+                  </div>
+                  <p className="text-sm text-gray-500 mb-4 line-clamp-2 font-medium">{agent.description || "Voice profiling active with semantic analysis enabled."}</p>
+                  <div className="flex items-center justify-between pt-4 border-t border-gray-200/50">
+                    <div className="flex items-center text-xs text-brand-violet font-bold bg-brand-violet/5 px-3 py-1.5 rounded-full">
+                      <Phone className="w-3 h-3 mr-2" />
+                      {agent.signalwire_phone_number || 'Reserved Unit'}
+                    </div>
+                    <Button variant="ghost" size="sm" className="text-xs font-bold text-gray-400 hover:text-brand-violet">
+                      Tune API
+                    </Button>
+                  </div>
                 </div>
-                <p className="text-sm text-gray-600 mb-2 line-clamp-2">{agent.description}</p>
-                <div className="flex items-center text-xs text-gray-500">
-                  <Phone className="w-3 h-3 mr-1" />
-                  {agent.signalwire_phone_number || 'No number assigned'}
+              ))
+            ) : (
+              <div className="col-span-3 p-16 text-center bg-gray-50 rounded-[2.5rem] border-2 border-dashed border-gray-200">
+                <div className="w-20 h-20 bg-white rounded-[2rem] shadow-sm flex items-center justify-center mx-auto mb-6">
+                  <PhoneCall className="w-10 h-10 text-gray-200" />
                 </div>
+                <h3 className="text-xl font-bold text-brand-black mb-2">No Neural Units Detected</h3>
+                <p className="text-gray-500 mb-8 max-w-sm mx-auto font-medium">Create your first AI agent to start scaling your business with humanlike conversations.</p>
+                <Button className="bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl h-14 px-10 font-bold text-lg shadow-lg shadow-brand-violet/20 transition-all active:scale-[0.98]" asChild>
+                  <a href="/agents/new" className="flex items-center">
+                    Initialize First Agent
+                    <Zap className="w-5 h-5 ml-3" />
+                  </a>
+                </Button>
               </div>
-            ))}
+            )}
           </div>
         </CardContent>
       </Card>

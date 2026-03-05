@@ -1,143 +1,128 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button } from '../ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
-import { 
-  Bot, 
-  Phone, 
-  BarChart3, 
-  Zap, 
-  Shield, 
+import {
+  Bot,
+  Phone,
+  BarChart3,
+  Zap,
+  Shield,
   Clock,
   ArrowRight,
   CheckCircle,
   Star,
-  Play
+  Play,
+  TrendingUp,
+  Infinity,
+  ZapOff
 } from 'lucide-react';
 
 const LandingPage = () => {
+  const [isPlaying, setIsPlaying] = useState(false);
+
+  const handlePlayDemo = () => {
+    setIsPlaying(true);
+    // In a real app, this would play an audio sample
+    setTimeout(() => setIsPlaying(false), 3000);
+  };
+
   const features = [
     {
-      icon: Bot,
-      title: 'AI-Powered Conversations',
-      description: 'Advanced natural language processing creates human-like phone interactions that feel authentic and engaging.'
-    },
-    {
       icon: Zap,
-      title: 'Lightning Fast Setup',
-      description: 'Deploy your first AI agent in minutes with our intuitive configuration wizard and pre-built templates.'
+      title: 'Sub-500ms Latency',
+      description: 'Conversations flow naturally without awkward pauses. Our edge-optimized infrastructure ensures lightning-fast responses.'
     },
     {
-      icon: BarChart3,
-      title: 'Advanced Analytics',
-      description: 'Get deep insights into call performance, customer sentiment, and agent effectiveness with real-time reports.'
+      icon: Bot,
+      title: 'Humanlike Voices',
+      description: 'Advanced neural TTS creates voices so realistic, your customers won\'t believe they\'re talking to an AI.'
     },
     {
-      icon: Shield,
-      title: 'Enterprise Security',
-      description: 'Bank-level encryption and compliance with industry standards ensure your data and calls stay secure.'
-    },
-    {
-      icon: Clock,
-      title: '24/7 Availability',
-      description: 'Your AI agents never sleep, handling calls around the clock to capture every opportunity.'
-    },
-    {
-      icon: Phone,
-      title: 'Seamless Integration',
-      description: 'Connect with your existing CRM, phone systems, and tools through our robust API and webhooks.'
+      icon: TrendingUp,
+      title: 'Built to Close',
+      description: 'Unlike generic bots, our AI is trained on high-converting sales scripts to handle objections and close deals.'
     }
+  ];
+
+  const comparisons = [
+    { feature: 'Price per Minute', us: '$0.03', others: '$0.15+' },
+    { feature: 'Telephony Included', us: 'Yes', others: 'Extra Charge' },
+    { feature: 'Setup Time', us: '1 Second', others: 'Days/Weeks' },
+    { feature: 'Latencey', us: '<500ms', others: '1500ms+' },
   ];
 
   const pricingTiers = [
     {
-      name: 'Starter',
-      price: '$49',
-      period: '/month',
-      description: 'Perfect for small businesses getting started',
-      features: [
-        '2 AI Agents',
-        '500 calls/month',
-        'Basic analytics',
-        'Email support',
-        'Standard voices'
-      ],
-      popular: false
-    },
-    {
-      name: 'Professional',
-      price: '$149',
-      period: '/month',
-      description: 'Ideal for growing businesses',
-      features: [
-        '10 AI Agents',
-        '2,500 calls/month',
-        'Advanced analytics',
-        'Priority support',
-        'Premium voices',
-        'Custom integrations'
-      ],
-      popular: true
-    },
-    {
-      name: 'Enterprise',
+      name: 'Enterprise Conversion+',
       price: 'Custom',
       period: '',
-      description: 'For large organizations',
+      description: 'Turn every inbound call into revenue. Enterprise-grade AI voice agents 24/7.',
       features: [
-        'Unlimited agents',
-        'Unlimited calls',
-        'White-label solution',
-        'Dedicated support',
-        'Custom voices',
-        'On-premise deployment'
+        'Dedicated GPU hosting',
+        'API integrations with CRM',
+        'Voice cloning + Multilingual',
+        '99.99% uptime SLA',
+        'Priority support & onboarding'
       ],
-      popular: false
-    }
-  ];
-
-  const testimonials = [
-    {
-      name: 'Sarah Chen',
-      title: 'VP of Sales, TechFlow',
-      content: 'AI Caller transformed our lead qualification process. We\'re now handling 3x more prospects with better conversion rates.',
-      rating: 5
+      popular: false,
+      cta: 'Contact Sales',
+      outcome: 'AI Handles Calls. You Handle Growth.'
     },
     {
-      name: 'Marcus Johnson',
-      title: 'Operations Director, ServicePro',
-      content: 'The setup was incredibly easy and the results immediate. Our customer support is now available 24/7 without additional staff.',
-      rating: 5
+      name: 'Growth Plan',
+      price: '$0.03',
+      period: '/min',
+      description: 'Scale sales and support affordably. No hidden costs. Competitors charge extra for telephony — we don’t.',
+      features: [
+        'Pay as you go',
+        'STT + Brain + TTS + Telephony',
+        'Sub-500ms latency',
+        'Unlimited team members',
+        'Analytics (conversion, outcomes)'
+      ],
+      popular: true,
+      cta: 'Only $0.03/min. Includes Everything.',
+      outcome: 'Scale sales and support affordably.'
     },
     {
-      name: 'Elena Rodriguez',
-      title: 'Founder, GrowthLabs',
-      content: 'The analytics insights help us understand our customers better than ever. It\'s like having a conversation analyst for every call.',
-      rating: 5
+      name: 'Free Trial',
+      price: '$0',
+      period: '/forever',
+      description: 'Test AI calls in real conversations. No risk, no card. 100 minutes free.',
+      features: [
+        '100 free minutes included',
+        'STT + Brain + TTS + Telephony',
+        'Access to all premium voices',
+        'Unlimited concurrent calls',
+        'Live dashboard + transcripts'
+      ],
+      popular: false,
+      cta: 'Try 100 Minutes Free — No Card Needed.',
+      outcome: 'Test AI calls in real conversations.'
     }
   ];
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen bg-brand-black text-brand-white selection:bg-brand-violet selection:text-white">
       {/* Navigation */}
-      <nav className="border-b border-gray-100">
+      <nav className="sticky top-0 z-50 glass-dark border-b border-white/10">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex justify-between items-center py-4">
-            <div className="flex items-center space-x-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center">
-                <Bot className="w-5 h-5 text-white" />
+            <div className="flex items-center space-x-3 group cursor-pointer">
+              <div className="w-10 h-10 bg-brand-violet rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(108,99,255,0.5)] group-hover:scale-110 transition-transform">
+                <Bot className="w-6 h-6 text-white" />
               </div>
-              <span className="text-xl font-bold text-gray-900">AI Caller</span>
+              <span className="text-2xl font-bold tracking-tight">VoiceRender</span>
             </div>
-            
+
             <div className="hidden md:flex items-center space-x-8">
-              <a href="#features" className="text-gray-600 hover:text-gray-900 transition-colors">Features</a>
-              <a href="#pricing" className="text-gray-600 hover:text-gray-900 transition-colors">Pricing</a>
-              <a href="#testimonials" className="text-gray-600 hover:text-gray-900 transition-colors">Testimonials</a>
-              <Button variant="outline">Sign In</Button>
-              <Button asChild className="bg-emerald-600 hover:bg-emerald-700">
-                <Link to="/dashboard">Get Started</Link>
+              <a href="#demo" className="text-gray-300 hover:text-brand-violet transition-colors font-medium">Try Demo</a>
+              <a href="#pricing" className="text-gray-300 hover:text-brand-violet transition-colors font-medium">Pricing</a>
+              <Link to="/login" className="text-gray-300 hover:text-brand-violet transition-colors font-medium">Login</Link>
+              <Button asChild className="bg-brand-violet hover:bg-brand-violet/90 text-white shadow-[0_0_20px_rgba(108,99,255,0.3)] hover:shadow-[0_0_25px_rgba(108,99,255,0.5)] transition-all scale-100 hover:scale-105">
+                <Link to="/register">Get Started</Link>
               </Button>
             </div>
           </div>
@@ -145,244 +130,272 @@ const LandingPage = () => {
       </nav>
 
       {/* Hero Section */}
-      <section className="py-20 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="text-center max-w-4xl mx-auto">
-            <Badge className="mb-6 bg-emerald-50 text-emerald-700 border-emerald-200">
-              ✨ Now with Advanced Voice AI Technology
+      <section className="relative pt-32 pb-20 px-4 overflow-hidden bg-gradient-hero">
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="text-center animate-reveal">
+            <Badge className="mb-6 bg-brand-violet/20 text-brand-violet border-brand-violet/30 px-4 py-1 animate-pulse">
+              Early Bird Pricing • Limited Slots Available
             </Badge>
-            
-            <h1 className="text-5xl md:text-6xl font-bold text-gray-900 mb-6">
-              Transform Your Business with
-              <span className="block bg-gradient-to-r from-emerald-600 to-teal-600 bg-clip-text text-transparent">
-                AI Phone Agents
-              </span>
+
+            <h1 className="text-6xl md:text-8xl font-bold mb-8 tracking-tighter leading-none">
+              AI Voices So Real, <br />
+              <span className="text-brand-violet text-glow">They Close Deals For You.</span>
             </h1>
-            
-            <p className="text-xl text-gray-600 mb-8 max-w-2xl mx-auto">
-              Deploy intelligent AI agents that handle customer calls, qualify leads, and provide support 
-              with human-like conversations that scale your business 24/7.
+
+            <p className="text-xl md:text-2xl text-gray-400 mb-12 max-w-3xl mx-auto font-body">
+              From call to customer in seconds. <span className="text-white font-semibold">Zero setup</span>, humanlike voices.
+              "Your AI Voice Agent, Ready in 1 Second."
             </p>
-            
-            <div className="flex flex-col sm:flex-row gap-4 justify-center items-center">
-              <Button size="lg" asChild className="bg-emerald-600 hover:bg-emerald-700">
-                <Link to="/dashboard">
-                  Start Free Trial
-                  <ArrowRight className="ml-2 w-4 h-4" />
+
+            <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
+              <Button
+                onClick={handlePlayDemo}
+                size="lg"
+                className={`h-16 px-8 text-lg bg-brand-violet hover:bg-brand-violet/90 text-white rounded-full transition-all group ${isPlaying ? 'scale-95' : 'hover:scale-105 hover:glow'}`}
+              >
+                {isPlaying ? (
+                  <span className="flex items-center"><Zap className="mr-2 animate-spin" /> Generating...</span>
+                ) : (
+                  <span className="flex items-center"><Play className="mr-2 fill-current" /> Hear the Demo</span>
+                )}
+              </Button>
+
+              <Button variant="ghost" size="lg" asChild className="h-16 px-8 text-lg text-white hover:bg-white/5 border border-white/10 rounded-full">
+                <Link to="/register">
+                  Try 100 Minutes Free
+                  <ArrowRight className="ml-2 w-5 h-5" />
                 </Link>
               </Button>
-              
-              <Button variant="outline" size="lg" className="flex items-center">
-                <Play className="mr-2 w-4 h-4" />
-                Watch Demo
-              </Button>
             </div>
-            
-            <p className="text-sm text-gray-500 mt-4">
-              No credit card required • 14-day free trial • Setup in 5 minutes
-            </p>
+
+            <div className="mt-16 flex justify-center items-center space-x-12 opacity-50 grayscale hover:grayscale-0 transition-all">
+              <div className="flex items-center space-x-2"><Shield className="w-5 h-5" /> <span>Secure by Design</span></div>
+              <div className="flex items-center space-x-2"><Clock className="w-5 h-5" /> <span>99.9% Uptime</span></div>
+              <div className="flex items-center space-x-2"><Zap className="w-5 h-5" /> <span>&lt;500ms Latency</span></div>
+            </div>
           </div>
+        </div>
+
+        {/* Background glow effects */}
+        <div className="absolute top-1/4 left-1/4 w-96 h-96 bg-brand-violet/10 blur-[120px] rounded-full"></div>
+        <div className="absolute bottom-1/4 right-1/4 w-64 h-64 bg-brand-violet/5 blur-[100px] rounded-full"></div>
+      </section>
+
+      {/* USP Banner */}
+      <section className="py-12 bg-white text-brand-black">
+        <div className="max-w-7xl mx-auto px-4 text-center">
+          <h2 className="text-2xl md:text-4xl font-bold">
+            One Transparent Price: <span className="text-brand-violet">$0.03/min.</span> Includes Everything.
+          </h2>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section id="features" className="py-20 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Everything you need to succeed
-            </h2>
-            <p className="text-xl text-gray-600 max-w-2xl mx-auto">
-              Powerful features designed to help you create, deploy, and manage AI phone agents that drive results.
-            </p>
-          </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {features.map((feature, index) => (
-              <Card key={index} className="border-0 shadow-sm hover:shadow-md transition-shadow duration-200">
-                <CardHeader>
-                  <div className="w-12 h-12 bg-emerald-100 rounded-lg flex items-center justify-center mb-4">
-                    <feature.icon className="w-6 h-6 text-emerald-600" />
+      {/* USP Details & Comparison */}
+      <section className="py-24 bg-brand-black px-4">
+        <div className="max-w-7xl mx-auto">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-20 items-center">
+            <div>
+              <h2 className="text-4xl md:text-5xl font-bold mb-8 leading-tight">
+                Stop losing leads. <br />
+                <span className="text-gray-500">Let AI close them for you.</span>
+              </h2>
+              <div className="space-y-6">
+                {features.map((f, i) => (
+                  <div key={i} className="flex items-start space-x-4 p-4 rounded-2xl border border-white/5 hover:bg-white/5 transition-colors group">
+                    <div className="w-12 h-12 bg-brand-violet/10 rounded-xl flex items-center justify-center group-hover:bg-brand-violet group-hover:text-white transition-all text-brand-violet">
+                      <f.icon className="w-6 h-6" />
+                    </div>
+                    <div>
+                      <h3 className="text-xl font-bold mb-1">{f.title}</h3>
+                      <p className="text-gray-400">{f.description}</p>
+                    </div>
                   </div>
-                  <CardTitle className="text-xl">{feature.title}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <CardDescription className="text-gray-600 text-base leading-relaxed">
-                    {feature.description}
-                  </CardDescription>
-                </CardContent>
-              </Card>
-            ))}
+                ))}
+              </div>
+            </div>
+
+            <div className="glass-dark rounded-3xl p-8 border-white/10 shadow-2xl relative overflow-hidden">
+              <div className="absolute top-0 right-0 p-4">
+                <Badge className="bg-brand-violet text-white">Why Us?</Badge>
+              </div>
+              <h3 className="text-2xl font-bold mb-8 italic">The Competition vs. VoiceRender</h3>
+              <div className="space-y-4">
+                {comparisons.map((c, i) => (
+                  <div key={i} className="grid grid-cols-3 py-4 border-b border-white/10 last:border-0">
+                    <span className="text-gray-400 font-medium">{c.feature}</span>
+                    <span className="text-center text-red-400 opacity-50">{c.others}</span>
+                    <span className="text-right text-brand-violet font-bold">{c.us}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-8 p-4 bg-brand-violet/10 rounded-xl border border-brand-violet/20 flex items-center space-x-3">
+                <ZapOff className="text-brand-violet w-5 h-5" />
+                <p className="text-sm font-medium">Others charge extra for telephony. We don’t.</p>
+              </div>
+            </div>
           </div>
         </div>
       </section>
 
       {/* Pricing Section */}
-      <section id="pricing" className="py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Simple, transparent pricing
-            </h2>
-            <p className="text-xl text-gray-600">
-              Choose the plan that fits your business needs
-            </p>
+      <section id="pricing" className="py-32 px-4 relative overflow-hidden">
+        <div className="max-w-7xl mx-auto relative z-10">
+          <div className="text-center mb-20 animate-reveal">
+            <h2 className="text-5xl md:text-6xl font-bold mb-6 tracking-tight">Outcome-Driven Pricing</h2>
+            <p className="text-xl text-gray-400">Scale without limits. No hidden fees. Pay only for performance.</p>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-5xl mx-auto">
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-8 items-stretch">
             {pricingTiers.map((tier, index) => (
-              <Card key={index} className={`relative ${tier.popular ? 'border-emerald-500 shadow-lg scale-105' : 'border-gray-200'}`}>
+              <div
+                key={index}
+                className={`relative flex flex-col p-8 rounded-[2rem] transition-all duration-500 hover:scale-[1.02] ${tier.popular
+                    ? 'bg-brand-white text-brand-black shadow-[0_0_50px_rgba(108,99,255,0.2)] z-20'
+                    : 'glass-dark border border-white/10 hover:border-brand-violet/50 z-10'
+                  }`}
+              >
                 {tier.popular && (
-                  <Badge className="absolute -top-3 left-1/2 transform -translate-x-1/2 bg-emerald-600 text-white">
-                    Most Popular
-                  </Badge>
-                )}
-                
-                <CardHeader className="text-center">
-                  <CardTitle className="text-2xl">{tier.name}</CardTitle>
-                  <div className="mt-4">
-                    <span className="text-4xl font-bold text-gray-900">{tier.price}</span>
-                    <span className="text-gray-500">{tier.period}</span>
+                  <div className="absolute -top-4 left-1/2 -translate-x-1/2 bg-brand-violet text-white px-6 py-1 rounded-full text-sm font-bold tracking-widest uppercase">
+                    Recommended
                   </div>
-                  <CardDescription className="mt-2">{tier.description}</CardDescription>
-                </CardHeader>
-                
-                <CardContent>
-                  <ul className="space-y-3 mb-8">
-                    {tier.features.map((feature, featureIndex) => (
-                      <li key={featureIndex} className="flex items-center">
-                        <CheckCircle className="w-5 h-5 text-emerald-500 mr-3 flex-shrink-0" />
-                        <span className="text-gray-600">{feature}</span>
-                      </li>
-                    ))}
-                  </ul>
-                  
-                  <Button 
-                    className={`w-full ${tier.popular ? 'bg-emerald-600 hover:bg-emerald-700' : ''}`}
-                    variant={tier.popular ? 'default' : 'outline'}
+                )}
+
+                <div className="mb-8">
+                  <h3 className="text-xl font-bold mb-4 opacity-50 uppercase tracking-widest">{tier.name}</h3>
+                  <div className="flex items-baseline space-x-1">
+                    <span className="text-5xl font-bold">{tier.price}</span>
+                    <span className="text-lg opacity-60">{tier.period}</span>
+                  </div>
+                  <p className={`mt-4 ${tier.popular ? 'text-gray-600' : 'text-gray-400'}`}>{tier.description}</p>
+                </div>
+
+                <div className="flex-grow space-y-4 mb-8">
+                  {tier.features.map((feature, i) => (
+                    <div key={i} className="flex items-center space-x-3">
+                      <CheckCircle className={`w-5 h-5 flex-shrink-0 ${tier.popular ? 'text-brand-violet' : 'text-brand-violet'}`} />
+                      <span className="font-medium">{feature}</span>
+                    </div>
+                  ))}
+                </div>
+
+                <div className={`mt-auto pt-8 border-t ${tier.popular ? 'border-gray-200' : 'border-white/10'}`}>
+                  <p className="text-sm font-bold mb-6 italic opacity-80 leading-snug">"{tier.outcome}"</p>
+                  <Button
+                    className={`w-full h-14 text-lg font-bold rounded-2xl shadow-lg transition-transform hover:scale-105 active:scale-95 ${tier.popular
+                        ? 'bg-brand-black text-white hover:bg-brand-black/90'
+                        : 'bg-brand-violet text-white hover:bg-brand-violet/90'
+                      }`}
                     asChild
                   >
-                    <Link to="/dashboard">
-                      {tier.name === 'Enterprise' ? 'Contact Sales' : 'Get Started'}
-                    </Link>
+                    <Link to="/register">{tier.cta}</Link>
                   </Button>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
       {/* Testimonials */}
-      <section id="testimonials" className="py-20 bg-gray-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Trusted by businesses worldwide
-            </h2>
-            <p className="text-xl text-gray-600">
-              See what our customers are saying about AI Caller
-            </p>
+      <section className="py-32 bg-brand-white text-brand-black">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-8 text-center md:text-left">
+            <div>
+              <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">Loved by Founders.</h2>
+              <p className="text-xl text-gray-500">Join 500+ teams scaling their outreach with VoiceRender.</p>
+            </div>
+            <div className="flex items-center space-x-2">
+              <div className="flex -space-x-3">
+                {[1, 2, 3, 4].map(i => (
+                  <div key={i} className="w-12 h-12 bg-gray-200 rounded-full border-4 border-white"></div>
+                ))}
+              </div>
+              <span className="font-bold">+492 others</span>
+            </div>
           </div>
-          
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {testimonials.map((testimonial, index) => (
-              <Card key={index} className="border-0 shadow-sm">
-                <CardContent className="pt-6">
-                  <div className="flex mb-4">
-                    {[...Array(testimonial.rating)].map((_, i) => (
-                      <Star key={i} className="w-5 h-5 text-yellow-400 fill-current" />
-                    ))}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+            {[1, 2, 3].map((_, i) => (
+              <div key={i} className="p-8 rounded-3xl bg-gray-50 border border-gray-100 hover:border-brand-violet/30 transition-colors group">
+                <div className="flex mb-6 text-brand-violet">
+                  {[1, 2, 3, 4, 5].map(j => <Star key={j} className="w-5 h-5 fill-current" />)}
+                </div>
+                <p className="text-lg mb-8 leading-relaxed font-medium">
+                  "{i === 0 ? "VoiceRender transformed our lead qualification process. We're now handling 3x more prospects with better conversion rates." :
+                    i === 1 ? "The setup was incredibly easy and the results immediate. Our customer support is now available 24/7 without additional staff." :
+                      "The analytics insights help us understand our customers better than ever. It's like having a conversation analyst for every call."}"
+                </p>
+                <div className="flex items-center space-x-4">
+                  <div className="w-12 h-12 bg-gray-200 rounded-full"></div>
+                  <div>
+                    <h4 className="font-bold">{i === 0 ? "Sarah Chen" : i === 1 ? "Marcus Johnson" : "Elena Rodriguez"}</h4>
+                    <p className="text-sm text-gray-500">{i === 0 ? "VP of Sales, TechFlow" : i === 1 ? "Ops Director, ServicePro" : "Founder, GrowthLabs"}</p>
                   </div>
-                  
-                  <p className="text-gray-600 mb-6 leading-relaxed">
-                    "{testimonial.content}"
-                  </p>
-                  
-                  <div className="border-t pt-4">
-                    <p className="font-medium text-gray-900">{testimonial.name}</p>
-                    <p className="text-sm text-gray-500">{testimonial.title}</p>
-                  </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
             ))}
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 bg-gradient-to-r from-emerald-600 to-teal-600">
-        <div className="max-w-4xl mx-auto text-center px-4 sm:px-6 lg:px-8">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-4">
-            Ready to transform your business?
+      {/* Final CTA */}
+      <section className="py-32 bg-brand-violet text-white relative overflow-hidden">
+        <div className="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
+        <div className="max-w-4xl mx-auto text-center px-4 relative z-10">
+          <h2 className="text-5xl md:text-7xl font-bold mb-8 tracking-tighter">
+            Ready to let AI <br />close your deals?
           </h2>
-          <p className="text-xl text-emerald-100 mb-8">
-            Join thousands of businesses already using AI Caller to scale their phone operations.
+          <p className="text-xl md:text-2xl text-white/80 mb-12">
+            Try 100 Minutes Free. No Credit Card Needed. Setup in 1 Second.
           </p>
-          
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <Button size="lg" variant="secondary" asChild>
-              <Link to="/dashboard">
-                Start Free Trial
-                <ArrowRight className="ml-2 w-4 h-4" />
-              </Link>
+            <Button size="lg" className="h-16 px-10 text-xl bg-white text-brand-violet hover:bg-white/90 rounded-2xl font-bold shadow-2xl transition-transform hover:scale-105 active:scale-95" asChild>
+              <Link to="/register">Get Started Now</Link>
             </Button>
-            <Button size="lg" variant="outline" className="text-white border-white hover:bg-white hover:text-emerald-600">
-              Schedule Demo
+            <Button size="lg" variant="outline" className="h-16 px-10 text-xl border-white/30 text-white hover:bg-white/10 rounded-2xl font-bold transition-transform hover:scale-105 active:scale-95">
+              Talk to Enterprise AI
             </Button>
           </div>
         </div>
+        {/* Animated circles */}
+        <div className="absolute -top-24 -left-24 w-64 h-64 border-[40px] border-white/10 rounded-full animate-[spin_10s_linear_infinite]"></div>
+        <div className="absolute -bottom-24 -right-24 w-64 h-64 border-[40px] border-white/10 rounded-full animate-[spin_15s_linear_infinite_reverse]"></div>
       </section>
 
       {/* Footer */}
-      <footer className="bg-gray-900 text-white py-12">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
+      <footer className="bg-brand-black text-white py-20 border-t border-white/5">
+        <div className="max-w-7xl mx-auto px-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-12">
             <div>
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="w-8 h-8 bg-gradient-to-br from-emerald-500 to-teal-600 rounded-lg flex items-center justify-center">
+              <div className="flex items-center space-x-3 mb-6">
+                <div className="w-8 h-8 bg-brand-violet rounded-lg flex items-center justify-center">
                   <Bot className="w-5 h-5 text-white" />
                 </div>
-                <span className="text-xl font-bold">AI Caller</span>
+                <span className="text-xl font-bold">VoiceRender</span>
               </div>
-              <p className="text-gray-400">
-                The future of business phone calls, powered by AI.
+              <p className="text-gray-400 leading-relaxed">
+                The future of business phone calls, powered by AI. Humanlike voices, sub-500ms latency.
               </p>
             </div>
-            
-            <div>
-              <h4 className="font-medium mb-4">Product</h4>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Features</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Pricing</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">API Docs</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Integrations</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-medium mb-4">Company</h4>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">About</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Blog</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Careers</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Contact</a></li>
-              </ul>
-            </div>
-            
-            <div>
-              <h4 className="font-medium mb-4">Support</h4>
-              <ul className="space-y-2 text-gray-400">
-                <li><a href="#" className="hover:text-white transition-colors">Help Center</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Status</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Privacy</a></li>
-                <li><a href="#" className="hover:text-white transition-colors">Terms</a></li>
-              </ul>
-            </div>
+
+            {[
+              { title: 'Product', links: ['Features', 'Pricing', 'API Docs', 'Integrations'] },
+              { title: 'Company', links: ['About', 'Blog', 'Careers', 'Contact'] },
+              { title: 'Support', links: ['Help Center', 'Status', 'Privacy', 'Terms'] }
+            ].map((col, i) => (
+              <div key={i}>
+                <h4 className="font-bold mb-6 text-brand-violet uppercase tracking-widest text-sm">{col.title}</h4>
+                <ul className="space-y-4 text-gray-400">
+                  {col.links.map((link, j) => (
+                    <li key={j}><a href="#" className="hover:text-white transition-colors">{link}</a></li>
+                  ))}
+                </ul>
+              </div>
+            ))}
           </div>
-          
-          <div className="border-t border-gray-800 mt-12 pt-8 text-center text-gray-400">
-            <p>&copy; 2024 AI Caller. All rights reserved.</p>
+
+          <div className="border-t border-white/5 mt-20 pt-10 text-center text-gray-500 text-sm">
+            <p>&copy; 2026 VoiceRender AI. All rights reserved. Premium AI Phone Agents.</p>
           </div>
         </div>
       </footer>

@@ -2,21 +2,24 @@ import logging
 import os
 import asyncio
 import json
-import random
 import uuid
 import base64
-from fastapi import FastAPI, WebSocket, Response, Request, BackgroundTasks, HTTPException
-from starlette.websockets import WebSocketDisconnect
-from fastapi.staticfiles import StaticFiles
-from groq import Groq
-from dotenv import load_dotenv
-from signalwire.voice_response import VoiceResponse, Connect, Stream, Play, Start
-from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 import redis
 import aiofiles
-import wave
-import audioop
+from fastapi import FastAPI, WebSocket, Response, Request, Depends, HTTPException
+from starlette.websockets import WebSocketDisconnect
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy.orm import Session
+from groq import Groq
+from dotenv import load_dotenv
+from signalwire.voice_response import VoiceResponse, Start
+from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
+
+# --- Import Database Logic ---
+from app.database import get_db
+from app.models import User, Organization
+from app.api.endpoints import router as api_router # Import the API router
 
 # --- Load Environment Variables & Configuration ---
 load_dotenv()
@@ -26,10 +29,13 @@ logger = logging.getLogger("VoiceAgentService")
 # --- FastAPI App Setup ---
 app = FastAPI()
 
-# --- CORS Middleware (MUST be below app = FastAPI()) ---
+# Include the API router
+app.include_router(api_router)
+
+# --- CORS Middleware (Fixed for Local Frontend & Preflight) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3001"], 
+    allow_origins=["http://localhost:3000", "http://localhost:3001"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -38,9 +44,6 @@ app.add_middleware(
 # --- Global Configuration & Clients ---
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
-SIGNALWIRE_PROJECT_ID = os.environ.get("SIGNALWIRE_PROJECT_ID")
-SIGNALWIRE_API_TOKEN = os.environ.get("SIGNALWIRE_API_TOKEN")
-SIGNALWIRE_SPACE_URL = os.environ.get("SIGNALWIRE_SPACE_URL")
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
 
 TELEPHONY_CODEC = "pcm_mulaw"
@@ -48,8 +51,8 @@ OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-config = DeepgramClientOptions(options={"keepalive": "true"})
-deepgram_client = DeepgramClient(DEEPGRAM_API_KEY, config)
+dg_config = DeepgramClientOptions(options={"keepalive": "true"})
+deepgram_client = DeepgramClient(DEEPGRAM_API_KEY, dg_config)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
 # --- Directory Setup ---
@@ -107,14 +110,16 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
 
 @app.get("/")
 async def root():
-    return {"message": "Voice Agent Service is running."}
-
+    return {"status": "success", "message": "Voice Agent Service with Database is running."}
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request):
     body = await request.form()
     call_sid = body.get("CallSid")
     response = VoiceResponse()
-    websocket_url = f"wss://{RENDER_EXTERNAL_URL.replace('https://', '')}/media/{call_sid}"
+    
+    clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
+    websocket_url = f"wss://{clean_url}/media/{call_sid}"
+    
     start = Start()
     start.stream(url=websocket_url, track='both_tracks')
     response.append(start)
@@ -135,11 +140,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         try:
             dg_connection = deepgram_client.listen.asynclive.v("1")
 
-            async def on_message(result, **kwargs):
+            async def on_message(self, result, **kwargs):
                 if result.channel.alternatives[0].transcript:
                     logger.info(f"Transcript: {result.channel.alternatives[0].transcript}")
 
-            async def on_open(open, **kwargs):
+            async def on_open(self, open, **kwargs):
                 deepgram_ready.set()
                 if buffered_frames:
                     for frame in buffered_frames:
@@ -162,7 +167,6 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
             if event == 'start':
                 stream_sid = data['start']['streamSid']
-                # Trigger Greeting
                 greeting_text = "Hello! Welcome to the voice agent."
                 tts_audio = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
                 asyncio.create_task(send_audio_payload_chunked(websocket, stream_sid, tts_audio, call_sid=call_sid))

@@ -10,6 +10,8 @@ import LoginPage from "./components/Auth/LoginPage";
 import RegisterPage from "./components/Auth/RegisterPage";
 import CallList from "./components/Calls/CallList"; // Import CallList
 import CallDetails from "./components/Calls/CallDetails"; // Import CallDetails
+import Reports from "./components/Reports/Reports";
+import Teams from "./components/Settings/Teams";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "./components/ui/toaster"; // Assuming you have a Toaster component
 
@@ -34,7 +36,7 @@ function App() {
             <Route path="/landing" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
-            
+
             {/* Redirect root to landing or login based on auth status */}
             <Route path="/" element={<AuthRedirect />} />
 
@@ -48,9 +50,10 @@ function App() {
                 {/* Call Management Routes */}
                 <Route path="calls" element={<CallList />} />
                 <Route path="calls/:id" element={<CallDetails />} />
+                {/* Implemented routes */}
+                <Route path="reports" element={<Reports />} />
+                <Route path="settings/users" element={<Teams />} />
                 {/* Placeholder routes - to be implemented */}
-                <Route path="reports" element={<div className="p-6"><h1 className="text-2xl font-bold">Analytics & Reports (Coming Soon)</h1><p className="text-gray-600 mt-2">Advanced analytics and insights dashboard.</p></div>} />
-                <Route path="settings/users" element={<div className="p-6"><h1 className="text-2xl font-bold">Team Management (Coming Soon)</h1><p className="text-gray-600 mt-2">Manage team members and permissions.</p></div>} />
                 <Route path="settings/api-keys" element={<div className="p-6"><h1 className="text-2xl font-bold">API Keys (Coming Soon)</h1><p className="text-gray-600 mt-2">Generate and manage API keys for integration.</p></div>} />
                 <Route path="settings" element={<div className="p-6"><h1 className="text-2xl font-bold">Account Settings (Coming Soon)</h1><p className="text-gray-600 mt-2">Manage your account preferences and billing.</p></div>} />
               </Route>

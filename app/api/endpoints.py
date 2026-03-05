@@ -205,3 +205,52 @@ async def get_call_details(
     if not call:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Call not found")
     return call
+
+# --- Dashboard Stats Endpoint ---
+@router.get("/dashboard/stats")
+async def get_dashboard_stats(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Total calls for the user's organization
+    total_calls = db.query(Call).filter(Call.organization_id == current_user.organization_id).count()
+    
+    # Active agents count
+    active_agents = db.query(Agent).filter(
+        Agent.organization_id == current_user.organization_id,
+        Agent.is_active == True
+    ).count()
+    
+    # Success rate (calls with status 'completed')
+    completed_calls = db.query(Call).filter(
+        Call.organization_id == current_user.organization_id,
+        Call.status == 'completed'
+    ).count()
+    
+    success_rate = (completed_calls / total_calls * 100) if total_calls > 0 else 0
+    
+    # Recent calls
+    recent_calls = db.query(Call).filter(
+        Call.organization_id == current_user.organization_id
+    ).order_by(Call.start_time.desc()).limit(5).all()
+    
+    # Placeholder for chart data
+    chart_data = [
+        {"month": "Jan", "calls": 0},
+        {"month": "Feb", "calls": 0},
+        {"month": "Mar", "calls": 0},
+        {"month": "Apr", "calls": 0},
+        {"month": "May", "calls": 0},
+        {"month": "Jun", "calls": 0},
+        {"month": "Jul", "calls": total_calls}
+    ]
+
+    return {
+        "totalCalls": total_calls,
+        "successRate": round(success_rate, 1),
+        "avgCallDuration": "0:00", # Placeholder
+        "activeCalls": 0, # Placeholder
+        "activeAgents": active_agents,
+        "recentCalls": recent_calls,
+        "monthlyCallVolume": chart_data
+    }
