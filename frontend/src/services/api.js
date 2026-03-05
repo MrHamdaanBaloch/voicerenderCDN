@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || 'http://localhost:8000/api/v1';
+const API_BASE_URL = process.env.REACT_APP_API_BASE_URL || '/api/v1';
 
 const api = axios.create({
     baseURL: API_BASE_URL,
@@ -31,7 +31,7 @@ api.interceptors.response.use(
             // Token expired or invalid, redirect to login
             localStorage.removeItem('access_token');
             // You might want to use a more robust way to redirect, e.g., a global context or history object
-            window.location.href = '/login'; 
+            window.location.href = '/login';
         }
         return Promise.reject(error);
     }
@@ -58,6 +58,7 @@ const agents = {
 const calls = {
     getCalls: () => api.get('/calls'),
     getCallDetails: (callId) => api.get(`/calls/${callId}`),
+    getDashboardStats: () => api.get('/dashboard/stats'),
 };
 
 export default {
