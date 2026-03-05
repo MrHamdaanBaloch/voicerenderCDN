@@ -14,14 +14,32 @@ import {
   LogOut,
   Menu,
   X,
-  Sparkles
+  Sparkles,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+
+// Theme toggle hook
+const useTheme = () => {
+  const [isDark, setIsDark] = React.useState(() => {
+    const saved = localStorage.getItem('vr-theme');
+    return saved ? saved === 'dark' : true; // default dark
+  });
+
+  React.useEffect(() => {
+    document.documentElement.classList.toggle('dark', isDark);
+    localStorage.setItem('vr-theme', isDark ? 'dark' : 'light');
+  }, [isDark]);
+
+  return [isDark, () => setIsDark(prev => !prev)];
+};
 
 const DashboardLayout = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
+  const [isDark, toggleTheme] = useTheme();
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -163,6 +181,15 @@ const DashboardLayout = () => {
             <p className="text-xs text-gray-400">Your AI agents are currently handling 24 active calls.</p>
           </div>
           <div className="flex items-center space-x-6">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={toggleTheme}
+              className="w-10 h-10 rounded-full bg-white/5 border border-white/10 text-white hover:bg-white/10 hover:text-brand-violet transition-all"
+              title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
+            >
+              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
             <div className="flex items-center space-x-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
               <Sparkles className="w-4 h-4 text-brand-violet" />
               <span className="text-xs font-bold text-white">Growth Plan: 1,240 mins left</span>

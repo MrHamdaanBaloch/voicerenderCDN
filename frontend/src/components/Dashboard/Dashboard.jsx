@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Skeleton } from '../ui/skeleton';
 import {
   Phone,
   TrendingUp,
@@ -19,6 +20,16 @@ import {
 import api from '../../services/api';
 import { getErrorMessage } from '../../lib/utils';
 import { useToast } from '../../hooks/use-toast';
+import { useCountUp } from '../../hooks/useCountUp';
+
+// Animated stat display component
+const AnimatedValue = ({ value, suffix = '', prefix = '' }) => {
+  const numericValue = typeof value === 'string' ? parseFloat(value.replace(/,/g, '')) : value;
+  const animated = useCountUp(isNaN(numericValue) ? 0 : numericValue, 2200, { suffix, prefix });
+
+  if (isNaN(numericValue)) return <span>{prefix}{value}{suffix}</span>;
+  return <span>{animated}</span>;
+};
 
 const Dashboard = () => {
   const [stats, setStats] = useState(null);
@@ -50,7 +61,29 @@ const Dashboard = () => {
     fetchDashboardData();
   }, [toast]);
 
-  const StatCard = ({ title, value, subtitle, icon: Icon, trend, color = "violet" }) => (
+  // Skeleton Loading State
+  const SkeletonStatCard = () => (
+    <Card className="relative overflow-hidden border-0 shadow-lg bg-white rounded-[2rem]">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+        <Skeleton className="h-3 w-24 bg-gray-200" />
+        <Skeleton className="h-9 w-9 rounded-xl bg-gray-200" />
+      </CardHeader>
+      <CardContent>
+        <Skeleton className="h-8 w-20 bg-gray-200 mb-2" />
+        <Skeleton className="h-3 w-32 bg-gray-100" />
+      </CardContent>
+    </Card>
+  );
+
+  const SkeletonCard = () => (
+    <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden p-8">
+      <Skeleton className="h-6 w-40 bg-gray-200 mb-2" />
+      <Skeleton className="h-4 w-56 bg-gray-100 mb-6" />
+      <Skeleton className="h-64 w-full rounded-[2rem] bg-gray-100" />
+    </Card>
+  );
+
+  const StatCard = ({ title, value, numericValue, subtitle, icon: Icon, trend, color = "violet", suffix = '', prefix = '' }) => (
     <Card className="relative overflow-hidden border-0 shadow-lg bg-white rounded-[2rem] group hover:-translate-y-1 transition-all duration-300">
       <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
         <CardTitle className="text-xs font-bold uppercase tracking-widest text-gray-400 font-heading">{title}</CardTitle>
@@ -59,7 +92,9 @@ const Dashboard = () => {
         </div>
       </CardHeader>
       <CardContent>
-        <div className="text-3xl font-bold text-brand-black mb-1">{value}</div>
+        <div className="text-3xl font-bold text-brand-black mb-1">
+          <AnimatedValue value={numericValue !== undefined ? numericValue : value} suffix={suffix} prefix={prefix} />
+        </div>
         {subtitle && (
           <p className="text-xs text-gray-500 font-medium flex items-center">
             {trend !== undefined && (
@@ -123,11 +158,18 @@ const Dashboard = () => {
 
   if (loading) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-[60vh]">
-        <div className="w-16 h-16 bg-brand-violet/10 rounded-3xl flex items-center justify-center animate-pulse mb-4">
-          <Bot className="w-8 h-8 text-brand-violet animate-bounce" />
+      <div className="space-y-8 animate-reveal">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
+          <SkeletonStatCard />
         </div>
-        <p className="text-white font-bold tracking-tight animate-pulse underline decoration-brand-violet decoration-2 underline-offset-4">Synchronizing Neural Engine...</p>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="lg:col-span-2"><SkeletonCard /></div>
+          <SkeletonCard />
+        </div>
+        <SkeletonCard />
       </div>
     );
   }
@@ -150,6 +192,7 @@ const Dashboard = () => {
         <StatCard
           title="Daily Call Volume"
           value={dashboardStats.totalCalls.toLocaleString()}
+          numericValue={dashboardStats.totalCalls}
           subtitle="Lifetime volume reachable"
           icon={PhoneCall}
           trend={12}
@@ -158,6 +201,8 @@ const Dashboard = () => {
         <StatCard
           title="Conversion Rate"
           value={`${dashboardStats.successRate}%`}
+          numericValue={dashboardStats.successRate}
+          suffix="%"
           subtitle="Top 1% of AI agents"
           icon={CheckCircle}
           trend={5}
@@ -174,6 +219,7 @@ const Dashboard = () => {
         <StatCard
           title="Neural Units Active"
           value={activeAgents.length || 12}
+          numericValue={activeAgents.length || 12}
           subtitle="Scaling on demand"
           icon={Zap}
           color="violet"
