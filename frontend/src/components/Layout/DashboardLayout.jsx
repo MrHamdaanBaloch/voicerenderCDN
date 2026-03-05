@@ -46,7 +46,7 @@ const DashboardLayout = () => {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-brand-black border-r border-white/5 transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 glass-dark transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
         <div className="flex items-center justify-between h-20 px-6">
           <Link to="/landing" className="flex items-center space-x-3 group">
@@ -86,7 +86,13 @@ const DashboardLayout = () => {
                 <Icon className={`w-5 h-5 mr-3 transition-colors ${active ? 'text-white' : 'text-gray-500 group-hover:text-brand-violet'
                   }`} />
                 {item.name}
-                {active && <div className="ml-auto w-1.5 h-1.5 bg-white rounded-full"></div>}
+                {item.name === 'Calls' && (
+                  <div className="ml-auto flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-brand-violet opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-violet"></span>
+                  </div>
+                )}
+                {active && !(item.name === 'Calls') && <div className="ml-auto w-1.5 h-1.5 bg-white rounded-full"></div>}
               </Link>
             );
           })}
@@ -116,11 +122,11 @@ const DashboardLayout = () => {
           <Button
             variant="ghost"
             size="sm"
-            className="w-full justify-start text-gray-500 hover:text-red-400 hover:bg-red-400/10 rounded-xl transition-all"
+            className="w-full justify-start text-red-400/60 hover:text-red-400 hover:bg-red-400/10 rounded-2xl transition-all font-black uppercase tracking-widest text-[10px] py-6 border border-white/5 hover:border-red-400/20"
             onClick={logout}
           >
-            <LogOut className="w-4 h-4 mr-2" />
-            Sign out
+            <LogOut className="w-4 h-4 mr-3" />
+            Security Sign out
           </Button>
         </div>
       </div>

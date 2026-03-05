@@ -17,7 +17,8 @@ import {
     Search,
     Zap,
     PieChart,
-    Activity
+    Activity,
+    ShieldCheck
 } from 'lucide-react';
 
 const Reports = () => {

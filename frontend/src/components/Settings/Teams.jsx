@@ -17,7 +17,8 @@ import {
     ShieldCheck,
     Globe,
     Zap,
-    Lock
+    Lock,
+    Activity
 } from 'lucide-react';
 
 const Teams = () => {
@@ -67,7 +68,7 @@ const Teams = () => {
                     </div>
                 </div>
                 <div>
-                     <Badge variant="outline" className="px-4 py-2 border-white/10 text-brand-violet bg-white/5 font-black uppercase tracking-widest text-[10px] rounded-xl">
+                    <Badge variant="outline" className="px-4 py-2 border-white/10 text-brand-violet bg-white/5 font-black uppercase tracking-widest text-[10px] rounded-xl">
                         {members.length} / 10 Active Seats
                     </Badge>
                 </div>
