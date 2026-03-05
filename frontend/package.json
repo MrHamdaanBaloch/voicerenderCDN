@@ -56,7 +56,7 @@
   },
   "scripts": {
     "start": "craco start",
-    "build": "npx craco build",
+    "build": "node node_modules/@craco/craco/dist/bin/craco.js build",
     "test": "craco test"
   },
   "browserslist": {
