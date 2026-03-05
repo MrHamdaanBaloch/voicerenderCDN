@@ -182,9 +182,9 @@ const LandingPage = () => {
       </section>
 
       {/* USP Banner */}
-      <section className="py-12 bg-white text-brand-black">
+      <section className="py-12 bg-brand-black border-y border-white/10">
         <div className="max-w-7xl mx-auto px-4 text-center">
-          <h2 className="text-2xl md:text-4xl font-bold">
+          <h2 className="text-2xl md:text-4xl font-bold text-white">
             One Transparent Price: <span className="text-brand-violet">$0.03/min.</span> Includes Everything.
           </h2>
         </div>
@@ -250,8 +250,8 @@ const LandingPage = () => {
               <div
                 key={index}
                 className={`relative flex flex-col p-8 rounded-[2rem] transition-all duration-500 hover:scale-[1.02] ${tier.popular
-                    ? 'bg-brand-white text-brand-black shadow-[0_0_50px_rgba(108,99,255,0.2)] z-20'
-                    : 'glass-dark border border-white/10 hover:border-brand-violet/50 z-10'
+                  ? 'bg-brand-white text-brand-black shadow-[0_0_50px_rgba(108,99,255,0.2)] z-20'
+                  : 'glass-dark border border-white/10 hover:border-brand-violet/50 z-10'
                   }`}
               >
                 {tier.popular && (
@@ -282,8 +282,8 @@ const LandingPage = () => {
                   <p className="text-sm font-bold mb-6 italic opacity-80 leading-snug">"{tier.outcome}"</p>
                   <Button
                     className={`w-full h-14 text-lg font-bold rounded-2xl shadow-lg transition-transform hover:scale-105 active:scale-95 ${tier.popular
-                        ? 'bg-brand-black text-white hover:bg-brand-black/90'
-                        : 'bg-brand-violet text-white hover:bg-brand-violet/90'
+                      ? 'bg-brand-black text-white hover:bg-brand-black/90'
+                      : 'bg-brand-violet text-white hover:bg-brand-violet/90'
                       }`}
                     asChild
                   >
@@ -297,38 +297,38 @@ const LandingPage = () => {
       </section>
 
       {/* Testimonials */}
-      <section className="py-32 bg-brand-white text-brand-black">
+      <section className="py-32 bg-brand-black">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex flex-col md:flex-row justify-between items-end mb-16 gap-8 text-center md:text-left">
             <div>
-              <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4">Loved by Founders.</h2>
-              <p className="text-xl text-gray-500">Join 500+ teams scaling their outreach with VoiceRender.</p>
+              <h2 className="text-5xl md:text-6xl font-bold tracking-tight mb-4 text-white">Loved by Founders.</h2>
+              <p className="text-xl text-gray-400">Join 500+ teams scaling their outreach with VoiceRender.</p>
             </div>
             <div className="flex items-center space-x-2">
               <div className="flex -space-x-3">
                 {[1, 2, 3, 4].map(i => (
-                  <div key={i} className="w-12 h-12 bg-gray-200 rounded-full border-4 border-white"></div>
+                  <div key={i} className="w-12 h-12 bg-white/10 rounded-full border-4 border-brand-black"></div>
                 ))}
               </div>
-              <span className="font-bold">+492 others</span>
+              <span className="font-bold text-white">+492 others</span>
             </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
             {[1, 2, 3].map((_, i) => (
-              <div key={i} className="p-8 rounded-3xl bg-gray-50 border border-gray-100 hover:border-brand-violet/30 transition-colors group">
+              <div key={i} className="p-8 rounded-3xl bg-white/5 border border-white/10 hover:border-brand-violet/30 transition-colors group">
                 <div className="flex mb-6 text-brand-violet">
                   {[1, 2, 3, 4, 5].map(j => <Star key={j} className="w-5 h-5 fill-current" />)}
                 </div>
-                <p className="text-lg mb-8 leading-relaxed font-medium">
+                <p className="text-lg mb-8 leading-relaxed font-medium text-gray-300">
                   "{i === 0 ? "VoiceRender transformed our lead qualification process. We're now handling 3x more prospects with better conversion rates." :
                     i === 1 ? "The setup was incredibly easy and the results immediate. Our customer support is now available 24/7 without additional staff." :
                       "The analytics insights help us understand our customers better than ever. It's like having a conversation analyst for every call."}"
                 </p>
                 <div className="flex items-center space-x-4">
-                  <div className="w-12 h-12 bg-gray-200 rounded-full"></div>
+                  <div className="w-12 h-12 bg-white/10 rounded-full"></div>
                   <div>
-                    <h4 className="font-bold">{i === 0 ? "Sarah Chen" : i === 1 ? "Marcus Johnson" : "Elena Rodriguez"}</h4>
+                    <h4 className="font-bold text-white">{i === 0 ? "Sarah Chen" : i === 1 ? "Marcus Johnson" : "Elena Rodriguez"}</h4>
                     <p className="text-sm text-gray-500">{i === 0 ? "VP of Sales, TechFlow" : i === 1 ? "Ops Director, ServicePro" : "Founder, GrowthLabs"}</p>
                   </div>
                 </div>

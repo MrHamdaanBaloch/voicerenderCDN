@@ -14,32 +14,14 @@ import {
   LogOut,
   Menu,
   X,
-  Sparkles,
-  Sun,
-  Moon
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
-
-// Theme toggle hook
-const useTheme = () => {
-  const [isDark, setIsDark] = React.useState(() => {
-    const saved = localStorage.getItem('vr-theme');
-    return saved ? saved === 'dark' : true; // default dark
-  });
-
-  React.useEffect(() => {
-    document.documentElement.classList.toggle('dark', isDark);
-    localStorage.setItem('vr-theme', isDark ? 'dark' : 'light');
-  }, [isDark]);
-
-  return [isDark, () => setIsDark(prev => !prev)];
-};
 
 const DashboardLayout = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
-  const [isDark, toggleTheme] = useTheme();
 
   const navigation = [
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -64,7 +46,7 @@ const DashboardLayout = () => {
       )}
 
       {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 glass-dark transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+      <div className={`fixed inset-y-0 left-0 z-50 w-64 glass-dark transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}>
         <div className="flex items-center justify-between h-20 px-6">
           <Link to="/landing" className="flex items-center space-x-3 group">
@@ -86,7 +68,7 @@ const DashboardLayout = () => {
           </Button>
         </div>
 
-        <nav className="mt-6 px-4 space-y-2 flex-grow overflow-y-auto h-[calc(100vh-160px)]">
+        <nav className="flex-1 mt-6 px-4 space-y-2 overflow-y-auto">
           <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-4 mb-4">Main Menu</div>
           {navigation.map((item) => {
             const Icon = item.icon;
@@ -117,11 +99,11 @@ const DashboardLayout = () => {
         </nav>
 
         {/* User info at bottom */}
-        <div className="px-4 py-6 border-t border-white/5">
-          <div className="bg-white/5 rounded-3xl p-4 mb-4 border border-white/5">
+        <div className="px-4 py-4 border-t border-white/5 mt-auto shrink-0">
+          <div className="bg-white/5 rounded-2xl p-3 mb-3 border border-white/5">
             <div className="flex items-center space-x-3">
-              <Avatar className="w-10 h-10 border-2 border-brand-violet/20">
-                <AvatarFallback className="bg-brand-violet text-white font-bold">
+              <Avatar className="w-9 h-9 border-2 border-brand-violet/20 shrink-0">
+                <AvatarFallback className="bg-brand-violet text-white font-bold text-sm">
                   {user?.first_name?.[0] || user?.email?.[0]?.toUpperCase()}
                 </AvatarFallback>
               </Avatar>
@@ -129,22 +111,17 @@ const DashboardLayout = () => {
                 <p className="text-sm font-bold text-white truncate">
                   {user?.first_name} {user?.last_name}
                 </p>
-                <div className="flex items-center">
-                  <Badge className="bg-brand-violet/10 text-brand-violet text-[10px] px-2 py-0 h-4 border-brand-violet/20 pointer-events-none">
-                    {user?.role || 'Pro Plan'}
-                  </Badge>
-                </div>
+                <p className="text-[10px] text-gray-400 truncate">{user?.email}</p>
               </div>
             </div>
           </div>
           <Button
             variant="ghost"
-            size="sm"
-            className="w-full justify-start text-red-400/60 hover:text-red-400 hover:bg-red-400/10 rounded-2xl transition-all font-black uppercase tracking-widest text-[10px] py-6 border border-white/5 hover:border-red-400/20"
             onClick={logout}
+            className="w-full h-12 justify-center text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500 border border-red-500/20 hover:border-red-500 rounded-2xl transition-all font-bold text-sm tracking-wide"
           >
-            <LogOut className="w-4 h-4 mr-3" />
-            Security Sign out
+            <LogOut className="w-4 h-4 mr-2" />
+            Sign Out
           </Button>
         </div>
       </div>
@@ -180,16 +157,7 @@ const DashboardLayout = () => {
             <h2 className="text-xl font-bold text-white tracking-tight">Welcome back, {user?.first_name}! 👋</h2>
             <p className="text-xs text-gray-400">Your AI agents are currently handling 24 active calls.</p>
           </div>
-          <div className="flex items-center space-x-6">
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={toggleTheme}
-              className="w-10 h-10 rounded-full bg-white/5 border border-white/10 text-white hover:bg-white/10 hover:text-brand-violet transition-all"
-              title={isDark ? 'Switch to Light Mode' : 'Switch to Dark Mode'}
-            >
-              {isDark ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </Button>
+          <div className="flex items-center space-x-4">
             <div className="flex items-center space-x-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
               <Sparkles className="w-4 h-4 text-brand-violet" />
               <span className="text-xs font-bold text-white">Growth Plan: 1,240 mins left</span>
