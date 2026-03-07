@@ -2,7 +2,7 @@ import uuid
 from datetime import timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status, Response
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -273,3 +273,39 @@ async def get_dashboard_stats(
         "recentCalls": recent_calls,
         "monthlyCallVolume": chart_data
     }
+
+# --- Billing and Phone Number Endpoints ---
+from app.services.signalwire import search_available_numbers
+from app.services.stripe_service import create_checkout_session, handle_stripe_webhook
+
+@router.get("/phone-numbers/search")
+async def search_numbers(area_code: Optional[str] = None):
+    try:
+        numbers = search_available_numbers(area_code=area_code)
+        return numbers
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+from pydantic import BaseModel
+class CheckoutRequest(BaseModel):
+    agent_id: str
+    phone_number: str
+
+@router.post("/billing/create-checkout-session")
+async def create_checkout(
+    req: CheckoutRequest,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        result = create_checkout_session(agent_id=req.agent_id, phone_number=req.phone_number, user_email=current_user.email)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/webhooks/stripe")
+async def stripe_webhook(request: Request):
+    payload = await request.body()
+    sig_header = request.headers.get("stripe-signature")
+    if not sig_header:
+        raise HTTPException(status_code=400, detail="Missing signature header")
+    return handle_stripe_webhook(payload, sig_header)

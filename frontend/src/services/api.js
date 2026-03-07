@@ -61,8 +61,14 @@ const calls = {
     getDashboardStats: () => api.get('/dashboard/stats'),
 };
 
+const billing = {
+    searchNumbers: (areaCode = '') => api.get(`/phone-numbers/search${areaCode ? `?area_code=${areaCode}` : ''}`),
+    createCheckoutSession: (agentId, phoneNumber) => api.post('/billing/create-checkout-session', { agent_id: agentId, phone_number: phoneNumber }),
+};
+
 export default {
     auth,
     agents,
     calls,
+    billing,
 };

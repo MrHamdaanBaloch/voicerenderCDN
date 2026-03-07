@@ -1,0 +1,96 @@
+import os
+import stripe
+import logging
+from fastapi import HTTPException
+from app.services.signalwire import purchase_number, configure_number_webhook
+from app.database import SessionLocal
+from app.models import Agent
+
+logger = logging.getLogger("StripeService")
+
+# Configuration
+stripe.api_key = os.getenv("STRIPE_API_KEY", "sk_test_dummy")
+STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
+STRIPE_PHONE_NUMBER_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "price_dummy") # The $5/month product ID
+FRONTEND_URL = os.getenv("PUBLIC_URL_BASE", "http://localhost:3000")
+
+def create_checkout_session(agent_id: str, phone_number: str, user_email: str):
+    """
+    Creates a Stripe Checkout Session to subscribe to a phone number.
+    Stores the agent_id and phone_number in metadata so the webhook knows what to provision.
+    """
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            customer_email=user_email,
+            line_items=[{
+                'price': STRIPE_PHONE_NUMBER_PRICE_ID,
+                'quantity': 1,
+            }],
+            mode='subscription',
+            success_url=f"{FRONTEND_URL}/dashboard/agents?checkout_success=true&agent_id={agent_id}",
+            cancel_url=f"{FRONTEND_URL}/dashboard/agents?checkout_cancelled=true",
+            metadata={
+                "agent_id": str(agent_id),
+                "phone_number": phone_number,
+                "type": "phone_number_subscription"
+            }
+        )
+        return {"url": session.url}
+    except Exception as e:
+        logger.error(f"Failed to create checkout session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def handle_stripe_webhook(payload: bytes, sig_header: str):
+    """
+    Handles incoming Stripe Webhooks, verifies signature, and provisions the phone number if payment succeeds.
+    """
+    try:
+        event = stripe.Webhook.construct_event(
+            payload, sig_header, STRIPE_WEBHOOK_SECRET
+        )
+    except ValueError as e:
+        logger.error("Invalid payload")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+    except stripe.error.SignatureVerificationError as e:
+        logger.error("Invalid signature")
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    # Handle successful checkout
+    if event['type'] == 'checkout.session.completed':
+        session = event['data']['object']
+        
+        # Check if this is a phone number purchase
+        metadata = session.get("metadata", {})
+        if metadata.get("type") == "phone_number_subscription":
+            phone_number = metadata.get("phone_number")
+            agent_id = metadata.get("agent_id")
+            subscription_id = session.get("subscription")
+            
+            logger.info(f"Checkout completed for {phone_number} on Agent {agent_id}. Provisioning via SignalWire...")
+            
+            try:
+                # 1. Buy the number on SignalWire
+                sw_result = purchase_number(phone_number)
+                sid = sw_result.get("sid")
+                
+                # 2. Configure the webhook to point to our app
+                clean_url = os.getenv("RENDER_EXTERNAL_URL", "").replace('http://', 'https://')
+                webhook_url = f"{clean_url}/incoming_call" 
+                configure_number_webhook(sid, webhook_url)
+                
+                # 3. Update the Agent in our Database to hold the new phone number
+                db = SessionLocal()
+                agent = db.query(Agent).filter(Agent.id == agent_id).first()
+                if agent:
+                    agent.signalwire_phone_number = phone_number
+                    # You could optionally store subscription_id here if you added a field for it
+                    db.commit()
+                db.close()
+                
+                logger.info(f"Successfully provisioned and attached {phone_number} to agent {agent_id}.")
+            except Exception as e:
+                logger.error(f"Provisioning failed after successful payment: {e}")
+                # In a real production app, you might want to queue a retry or notify an admin here.
+
+    return {"status": "success"}

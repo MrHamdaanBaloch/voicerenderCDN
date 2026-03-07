@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -25,7 +25,10 @@ import {
   ArrowRight,
   ChevronLeft,
   ChevronRight,
-  Check
+  Check,
+  Search,
+  CreditCard,
+  Loader2
 } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/use-toast';
@@ -34,6 +37,7 @@ import { getErrorMessage } from '../../lib/utils';
 const AgentForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const isEditing = Boolean(id);
   const { toast } = useToast();
 
@@ -60,6 +64,11 @@ const AgentForm = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
+
+  // Phone number provisioning state
+  const [availableNumbers, setAvailableNumbers] = useState([]);
+  const [isSearchingNumbers, setIsSearchingNumbers] = useState(false);
+  const [areaCodeSearch, setAreaCodeSearch] = useState('');
 
   const tabOrder = ['basic', 'voice', 'advanced', 'phone'];
   const tabLabels = { basic: 'Identity', voice: 'Vocal/AI', advanced: 'Neural', phone: 'Gateway' };
@@ -134,6 +143,29 @@ const AgentForm = () => {
     fetchAgent();
   }, [id, isEditing, toast]);
 
+  // Handle Stripe Checkout redirects
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const checkoutSuccess = searchParams.get('checkout_success');
+    const checkoutCancelled = searchParams.get('checkout_cancelled');
+
+    if (checkoutSuccess === 'true') {
+      toast({
+        title: "Number Purchased! 🎉",
+        description: "Your new dedicated number has been provisioned and linked to this agent. It may take a minute to activate.",
+      });
+      // Clean up URL
+      window.history.replaceState({}, document.title, window.location.pathname);
+    } else if (checkoutCancelled === 'true') {
+      toast({
+        title: "Checkout Cancelled",
+        description: "You cancelled the phone number purchase.",
+        variant: "destructive",
+      });
+      window.history.replaceState({}, document.title, window.location.pathname);
+    }
+  }, [location, toast]);
+
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
       ...prev,
@@ -187,6 +219,45 @@ const AgentForm = () => {
 
   const handleTest = () => {
     alert('Test call functionality would be implemented here. This would simulate a call with the current agent configuration.');
+  };
+
+  const handleSearchNumbers = async () => {
+    setIsSearchingNumbers(true);
+    try {
+      const response = await api.billing.searchNumbers(areaCodeSearch);
+      setAvailableNumbers(response.data);
+    } catch (err) {
+      toast({
+        title: "Search Failed",
+        description: "Could not find available numbers.",
+        variant: "destructive",
+      });
+    } finally {
+      setIsSearchingNumbers(false);
+    }
+  };
+
+  const handleBuyNumber = async (phoneNumber) => {
+    try {
+      if (!isEditing || !id) {
+        toast({
+          title: "Action Required",
+          description: "Please deploy (save) this agent first before purchasing a dedicated number.",
+          variant: "destructive",
+        });
+        return;
+      }
+      const response = await api.billing.createCheckoutSession(id, phoneNumber);
+      if (response.data && response.data.url) {
+        window.location.href = response.data.url;
+      }
+    } catch (err) {
+      toast({
+        title: "Checkout Failed",
+        description: "Could not initiate secure secure checkout session.",
+        variant: "destructive",
+      });
+    }
   };
 
   if (loading && isEditing) {
@@ -282,8 +353,8 @@ const AgentForm = () => {
                 <div
                   key={tab}
                   className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${i <= currentStepIndex
-                      ? 'bg-brand-violet shadow-[0_0_8px_rgba(108,99,255,0.4)]'
-                      : 'bg-white/10'
+                    ? 'bg-brand-violet shadow-[0_0_8px_rgba(108,99,255,0.4)]'
+                    : 'bg-white/10'
                     }`}
                 />
               ))}
@@ -538,7 +609,50 @@ const AgentForm = () => {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6">
+                <div className="pt-8 border-t border-gray-100">
+                  <h3 className="text-lg font-bold text-brand-black mb-4">Or Provision a New Dedicated Number</h3>
+                  <div className="flex gap-4 mb-6">
+                    <Input
+                      placeholder="Area code (e.g., 888)"
+                      value={areaCodeSearch}
+                      onChange={(e) => setAreaCodeSearch(e.target.value)}
+                      className="h-14 border-gray-100 bg-gray-50 rounded-2xl w-48 font-bold text-lg"
+                    />
+                    <Button
+                      type="button"
+                      onClick={handleSearchNumbers}
+                      disabled={isSearchingNumbers}
+                      className="h-14 px-8 bg-brand-black hover:bg-gray-800 text-white rounded-2xl font-bold"
+                    >
+                      {isSearchingNumbers ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5 mr-2" />}
+                      Search Numbers
+                    </Button>
+                  </div>
+
+                  {availableNumbers.length > 0 && (
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {availableNumbers.map((num, idx) => (
+                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-gray-50 border border-gray-100 rounded-2xl hover:border-brand-violet transition-colors">
+                          <div className="mb-3 sm:mb-0">
+                            <p className="font-bold text-lg text-brand-black">{num.phone_number}</p>
+                            <p className="text-xs text-gray-500 font-medium capitalize">{num.locality || 'US Local'} {num.region ? `, ${num.region}` : ''}</p>
+                          </div>
+                          <Button
+                            type="button"
+                            onClick={() => handleBuyNumber(num.phone_number)}
+                            variant="outline"
+                            className="bg-white border-brand-violet/20 hover:bg-brand-violet hover:text-white text-brand-violet font-bold rounded-xl transition-all"
+                          >
+                            <CreditCard className="w-4 h-4 mr-2" />
+                            Buy for $5/mo
+                          </Button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 align-top border-t border-gray-100">
                   <div className="p-6 bg-brand-violet/5 rounded-3xl border border-brand-violet/10">
                     <h4 className="font-bold text-brand-black mb-2 flex items-center">
                       <div className="w-6 h-6 bg-brand-violet text-white rounded-full flex items-center justify-center text-[10px] mr-2">1</div>
@@ -574,8 +688,8 @@ const AgentForm = () => {
             onClick={goPrev}
             disabled={isFirstStep}
             className={`h-14 px-8 rounded-2xl font-bold text-sm transition-all ${isFirstStep
-                ? 'opacity-30 cursor-not-allowed text-gray-600'
-                : 'text-white bg-white/5 border border-white/10 hover:bg-white/10 hover:border-brand-violet/50'
+              ? 'opacity-30 cursor-not-allowed text-gray-600'
+              : 'text-white bg-white/5 border border-white/10 hover:bg-white/10 hover:border-brand-violet/50'
               }`}
           >
             <ChevronLeft className="w-5 h-5 mr-2" />
