@@ -146,8 +146,8 @@ const CallDetails = () => {
                 <div className="space-y-1">
                   <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Status</p>
                   <Badge className={`border-0 uppercase tracking-widest text-[9px] h-5 px-2 font-bold ${call.status === 'completed' ? 'bg-emerald-500/10 text-emerald-600' :
-                      call.status === 'in_progress' ? 'bg-brand-violet/10 text-brand-violet' :
-                        'bg-gray-200 text-gray-500'
+                    call.status === 'in_progress' ? 'bg-brand-violet/10 text-brand-violet' :
+                      'bg-gray-200 text-gray-500'
                     }`}>
                     {call.status?.replace('_', ' ')}
                   </Badge>
@@ -225,8 +225,8 @@ const CallDetails = () => {
                           {transcript.speaker === 'user' && <User className="w-3 h-3 ml-2 text-gray-400" />}
                         </div>
                         <div className={`p-5 rounded-3xl shadow-sm transition-all hover:shadow-md ${transcript.speaker === 'user'
-                            ? 'bg-brand-black text-white rounded-tr-none'
-                            : 'bg-gray-50 text-brand-black border border-gray-100 rounded-tl-none'
+                          ? 'bg-brand-black text-white rounded-tr-none'
+                          : 'bg-gray-50 text-brand-black border border-gray-100 rounded-tl-none'
                           }`}>
                           <p className="text-sm font-medium leading-relaxed">{transcript.text}</p>
                         </div>

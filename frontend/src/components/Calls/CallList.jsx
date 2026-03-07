@@ -1,21 +1,14 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
-import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import {
-  Search,
-  PhoneCall,
-  Clock,
-  CalendarDays,
-  Bot,
-  User,
-  ArrowUpRight,
-  Activity,
-  History
-} from 'lucide-react';
+import { Search, PhoneCall, Clock, CalendarDays, Bot, User, ArrowUpRight, Activity, History } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/use-toast';
+
+const statusMap = {
+  completed: { label: 'Completed', cls: 'badge-active' },
+  in_progress: { label: 'Live', cls: 'badge-alert' },
+  failed: { label: 'Failed', cls: 'badge-inactive' },
+};
 
 const CallList = () => {
   const [calls, setCalls] = useState([]);
@@ -31,173 +24,141 @@ const CallList = () => {
       const response = await api.calls.getCalls();
       setCalls(response.data);
     } catch (err) {
-      console.error("Failed to fetch calls:", err);
-      setError("Failed to load calls histories from the cloud.");
-      toast({
-        title: "Error",
-        description: "Failed to load calls.",
-        variant: "destructive",
-      });
+      setError('Failed to load call history.');
+      toast({ title: 'Error', description: 'Failed to load calls.', variant: 'destructive' });
     } finally {
       setLoading(false);
     }
   }, [toast]);
 
-  useEffect(() => {
-    fetchCalls();
-  }, [fetchCalls]);
+  useEffect(() => { fetchCalls(); }, [fetchCalls]);
 
   const filteredCalls = calls.filter(call => {
-    const searchLower = searchQuery.toLowerCase();
+    const q = searchQuery.toLowerCase();
     return (
-      (call.from_number?.toLowerCase() || '').includes(searchLower) ||
-      (call.to_number?.toLowerCase() || '').includes(searchLower) ||
-      (call.status?.toLowerCase() || '').includes(searchLower) ||
-      (call.agent?.name?.toLowerCase() || '').includes(searchLower)
+      (call.from_number?.toLowerCase() || '').includes(q) ||
+      (call.to_number?.toLowerCase() || '').includes(q) ||
+      (call.status?.toLowerCase() || '').includes(q) ||
+      (call.agent?.name?.toLowerCase() || '').includes(q)
     );
   });
 
-  const formatDuration = (seconds) => {
-    if (seconds === null || seconds === undefined) return '0s';
-    const minutes = Math.floor(seconds / 60);
-    const remainingSeconds = seconds % 60;
-    return minutes > 0 ? `${minutes}m ${remainingSeconds}s` : `${remainingSeconds}s`;
+  const fmt = (s) => {
+    if (!s && s !== 0) return '—';
+    const m = Math.floor(s / 60), r = s % 60;
+    return m > 0 ? `${m}m ${r}s` : `${r}s`;
   };
 
-  const CallCard = ({ call }) => (
-    <Card className="relative group overflow-hidden border-0 shadow-xl bg-white rounded-[2.5rem] hover:-translate-y-2 transition-all duration-300">
-      <CardHeader className="pb-4 pt-8 px-8">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center space-x-4">
-            <div className={`w-12 h-12 rounded-2xl flex items-center justify-center transition-all ${call.status === 'completed'
-                ? 'bg-brand-violet/5 text-brand-violet'
-                : 'bg-emerald-500/10 text-emerald-600'
-              }`}>
-              <PhoneCall className="w-6 h-6" />
-            </div>
-            <div>
-              <CardTitle className="text-lg font-bold text-brand-black">
-                {call.from_number || 'Incoming...'}
-              </CardTitle>
-              <div className="flex items-center space-x-2 mt-1">
-                <Badge
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border-0 ${call.status === 'completed' ? 'bg-brand-violet/10 text-brand-violet' :
-                      call.status === 'in_progress' ? 'bg-emerald-500/10 text-emerald-600' :
-                        'bg-gray-200 text-gray-500'
-                    }`}
-                >
-                  {call.status?.replace('_', ' ') || 'unknown'}
-                </Badge>
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center text-[10px] font-bold text-gray-400 bg-gray-50 px-2.5 py-1 rounded-full border border-gray-100">
-            <CalendarDays className="w-3 h-3 mr-1.5" />
-            {new Date(call.start_time).toLocaleDateString()}
-          </div>
+  /* ── Call row ── */
+  const CallRow = ({ call, idx }) => {
+    const sc = statusMap[call.status] || statusMap.failed;
+    return (
+      <div
+        className="flex items-center gap-4 p-4 border-b border-white/[0.04] hover:bg-white/[0.02] transition-colors group animate-reveal"
+        style={{ animationDelay: `${idx * 35}ms` }}
+      >
+        <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 ${call.status === 'completed' ? 'bg-emerald-500/10' : call.status === 'in_progress' ? 'bg-violet-500/15' : 'bg-white/[0.04]'
+          }`}>
+          <PhoneCall className={`w-4 h-4 ${call.status === 'completed' ? 'text-emerald-400' : call.status === 'in_progress' ? 'text-violet-400' : 'text-zinc-600'
+            }`} />
         </div>
-      </CardHeader>
-      <CardContent className="px-8 pb-8 pt-0 space-y-4">
-        <div className="grid grid-cols-2 gap-3 mt-2">
-          <div className="flex flex-col p-3 bg-gray-50 rounded-2xl border border-gray-100">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Controller</span>
-            <div className="flex items-center text-xs font-bold text-brand-black truncate">
-              <Bot className="w-3 h-3 mr-1.5 text-brand-violet" />
-              {call.agent?.name || 'Automator'}
-            </div>
-          </div>
-          <div className="flex flex-col p-3 bg-gray-50 rounded-2xl border border-gray-100">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-1">Duration</span>
-            <div className="flex items-center text-xs font-bold text-brand-black">
-              <Clock className="w-3 h-3 mr-1.5 text-brand-violet" />
-              {formatDuration(call.duration_seconds)}
-            </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-white font-mono-ui leading-tight">{call.from_number || 'Unknown'}</p>
+          <div className="flex items-center gap-2 mt-0.5">
+            <Bot className="w-3 h-3 text-zinc-700 shrink-0" />
+            <span className="text-[11px] text-zinc-600 truncate">{call.agent?.name || 'AI Agent'}</span>
           </div>
         </div>
 
-        <div className="flex items-center justify-between pt-6 border-t border-gray-100">
-          <div className="flex items-center space-x-2 text-xs font-bold text-gray-400">
-            <User className="w-3 h-3" />
-            <span>Target: {call.to_number || 'N/A'}</span>
+        <div className="hidden sm:flex flex-col items-end gap-1 shrink-0">
+          <span className={sc.cls}>{sc.label}</span>
+          <div className="flex items-center gap-1 text-[10px] text-zinc-700 font-mono-ui">
+            <Clock className="w-2.5 h-2.5" />
+            {fmt(call.duration_seconds)}
           </div>
-          <Button variant="ghost" size="sm" className="h-10 px-4 rounded-xl font-bold bg-brand-violet/5 text-brand-violet hover:bg-brand-violet hover:text-white transition-all" asChild>
-            <Link to={`/calls/${call.id}`}>
-              Logs <ArrowUpRight className="w-4 h-4 ml-1.5" />
-            </Link>
-          </Button>
         </div>
-      </CardContent>
-    </Card>
-  );
+
+        <div className="hidden md:flex items-center gap-1 text-[10px] text-zinc-700 shrink-0">
+          <CalendarDays className="w-3 h-3" />
+          {call.start_time ? new Date(call.start_time).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—'}
+        </div>
+
+        <Link
+          to={`/calls/${call.id}`}
+          className="flex items-center gap-1 text-[11px] font-semibold text-zinc-600 hover:text-violet-400 transition-colors shrink-0"
+        >
+          Detail <ArrowUpRight className="w-3 h-3" />
+        </Link>
+      </div>
+    );
+  };
 
   if (loading && calls.length === 0) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-[60vh]">
-        <div className="w-16 h-16 bg-white/5 rounded-3xl flex items-center justify-center animate-pulse mb-4 border border-white/10">
-          <History className="w-8 h-8 text-brand-violet animate-spin-slow" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center animate-pulse-slow">
+          <History className="w-6 h-6 text-violet-400" />
         </div>
-        <p className="text-white font-bold tracking-tight animate-pulse underline decoration-brand-violet decoration-2 underline-offset-4">Syncing Transmission Logs...</p>
+        <p className="text-sm font-semibold text-zinc-500">Loading call history…</p>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-[60vh] text-center">
-        <div className="w-20 h-20 bg-red-100 rounded-full flex items-center justify-center mb-6">
-          <Activity className="w-10 h-10 text-red-500" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4 text-center">
+        <div className="w-12 h-12 rounded-2xl bg-rose-500/10 flex items-center justify-center">
+          <Activity className="w-6 h-6 text-rose-400" />
         </div>
-        <h1 className="text-2xl font-bold text-white mb-2">Sync Interrupted</h1>
-        <p className="text-gray-400 mb-8 max-w-md">{error}</p>
-        <Button onClick={fetchCalls} className="bg-brand-violet hover:bg-brand-violet/90 rounded-xl px-8 h-12 font-bold transition-all">
-          Retry Sync
-        </Button>
+        <p className="font-bold text-white">Unable to load calls</p>
+        <p className="text-sm text-zinc-600">{error}</p>
+        <button onClick={fetchCalls} className="btn-primary mt-2">Retry</button>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-reveal">
+    <div className="space-y-6 animate-reveal">
       {/* Header */}
       <div>
-        <h1 className="text-3xl font-bold text-white tracking-tight">Transmission Archive</h1>
-        <p className="text-gray-400 font-medium">Detailed audit trail for all AI-governed communications.</p>
+        <h1 className="text-2xl font-heading font-bold text-white tracking-tight">Call History</h1>
+        <p className="text-sm text-zinc-600 mt-0.5">Inbound call logs and transcripts from all agents.</p>
       </div>
 
-      {/* Filters */}
-      <div className="flex flex-col sm:flex-row gap-4">
-        <div className="relative flex-1 group">
-          <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-brand-violet transition-colors" />
-          <Input
-            placeholder="Search transcripts by number, status or agent..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-14 pl-12 bg-white/5 border-white/10 text-white placeholder:text-gray-500 rounded-2xl focus:border-brand-violet focus:ring-brand-violet transition-all"
-            disabled={loading}
-          />
-        </div>
+      {/* Search */}
+      <div className="relative max-w-md">
+        <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+        <input
+          placeholder="Search by number, agent, or status…"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          className="form-input pl-9 h-10 w-full"
+          disabled={loading}
+        />
       </div>
 
-      {/* Calls Grid */}
+      {/* Table */}
       {filteredCalls.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-          {filteredCalls.map((call) => (
-            <CallCard key={call.id} call={call} />
-          ))}
+        <div className="card-surface overflow-hidden">
+          {/* Column headers */}
+          <div className="hidden sm:grid grid-cols-[1fr_auto_auto_auto_auto] gap-4 px-4 py-2.5 border-b border-white/[0.06] text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-700">
+            <span>Caller</span>
+            <span>Status</span>
+            <span>Duration</span>
+            <span>Date</span>
+            <span />
+          </div>
+          {filteredCalls.map((call, i) => <CallRow key={call.id} call={call} idx={i} />)}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-20 bg-white/5 border border-dashed border-white/10 rounded-[3rem] text-center px-6">
-          <div className="w-20 h-20 bg-white/5 rounded-[2rem] flex items-center justify-center mb-6">
-            <History className="w-10 h-10 text-gray-500" />
+        <div className="card-surface flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-white/[0.04] flex items-center justify-center mb-4 animate-float">
+            <History className="w-6 h-6 text-zinc-700" />
           </div>
-          <h3 className="text-2xl font-bold text-white mb-2">
-            {searchQuery ? 'Record Not Found' : 'Archive Clear'}
-          </h3>
-          <p className="text-gray-400 mb-8 max-w-sm">
-            {searchQuery
-              ? 'No transmission matches your query. Try broadening your search parameters.'
-              : 'Data streams will propagate here as soon as your agents begin their cycles.'
-            }
+          <p className="font-bold text-white mb-1">{searchQuery ? 'No results' : 'No calls yet'}</p>
+          <p className="text-[13px] text-zinc-600 max-w-xs">
+            {searchQuery ? 'Try a different search.' : 'Inbound calls will appear here once your agents start receiving calls.'}
           </p>
         </div>
       )}

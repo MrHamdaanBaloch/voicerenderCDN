@@ -2,7 +2,6 @@ import React from 'react';
 import { Link, useLocation, Outlet } from 'react-router-dom';
 import { Button } from '../ui/button';
 import { Avatar, AvatarFallback } from '../ui/avatar';
-import { Badge } from '../ui/badge';
 import {
   LayoutDashboard,
   Bot,
@@ -15,172 +14,224 @@ import {
   Menu,
   X,
   Sparkles,
-  Hash
+  Hash,
+  Zap,
+  ChevronRight,
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+
+const NAV_ITEMS = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, group: 'overview' },
+  { name: 'Agents', href: '/agents', icon: Bot, group: 'core' },
+  { name: 'Calls', href: '/calls', icon: Phone, group: 'core', live: true },
+  { name: 'Numbers', href: '/phone-numbers', icon: Hash, group: 'core' },
+  { name: 'Reports', href: '/reports', icon: BarChart3, group: 'analyze' },
+  { name: 'Team', href: '/settings/users', icon: Users, group: 'settings' },
+  { name: 'API Keys', href: '/settings/api-keys', icon: Key, group: 'settings' },
+  { name: 'Settings', href: '/settings', icon: Settings, group: 'settings' },
+];
+
+const GROUPS = [
+  { key: 'overview', label: 'Overview' },
+  { key: 'core', label: 'Workspace' },
+  { key: 'analyze', label: 'Analytics' },
+  { key: 'settings', label: 'Settings' },
+];
 
 const DashboardLayout = () => {
   const { user, logout } = useAuth();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
-  const navigation = [
-    { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-    { name: 'Agents', href: '/agents', icon: Bot },
-    { name: 'Calls', href: '/calls', icon: Phone },
-    { name: 'Numbers', href: '/phone-numbers', icon: Hash },
-    { name: 'Reports', href: '/reports', icon: BarChart3 },
-    { name: 'Team', href: '/settings/users', icon: Users },
-    { name: 'API Keys', href: '/settings/api-keys', icon: Key },
-    { name: 'Settings', href: '/settings', icon: Settings },
-  ];
+  const isActive = (href) =>
+    location.pathname === href || location.pathname.startsWith(href + '/');
 
-  const isActive = (path) => location.pathname === path || location.pathname.startsWith(path + '/');
+  const balanceMins = user?.balance_seconds
+    ? Math.floor(user.balance_seconds / 60)
+    : 0;
 
   return (
     <div className="flex h-screen bg-brand-black font-body overflow-hidden">
-      {/* Mobile sidebar backdrop */}
+      {/* Mobile overlay */}
       {sidebarOpen && (
         <div
-          className="fixed inset-0 bg-black/60 backdrop-blur-sm lg:hidden z-40"
+          className="fixed inset-0 z-40 bg-black/70 backdrop-blur-sm lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
       )}
 
-      {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 glass-dark transform transition-all duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0 flex flex-col ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
-        }`}>
-        <div className="flex items-center justify-between h-20 px-6">
-          <Link to="/landing" className="flex items-center space-x-3 group">
-            <div className="w-10 h-10 bg-brand-violet rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(108,99,255,0.4)] group-hover:scale-110 transition-transform">
-              <Bot className="w-6 h-6 text-white" />
+      {/* ── Sidebar ── */}
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 flex flex-col w-60 border-r border-white/[0.06] bg-[#09090B] transition-transform duration-300 ease-in-out lg:relative lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+          }`}
+      >
+        {/* Logo */}
+        <div className="flex items-center justify-between h-16 px-5 border-b border-white/[0.06] shrink-0">
+          <Link to="/landing" className="flex items-center gap-2.5 group">
+            <div className="w-8 h-8 bg-gradient-to-br from-violet-600 to-violet-800 rounded-lg flex items-center justify-center shadow-glow-violet group-hover:shadow-[0_0_20px_rgba(124,58,237,0.6)] transition-shadow">
+              <Zap className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-white tracking-tight">VoiceRender</h1>
-              <p className="text-[10px] text-brand-violet font-bold uppercase tracking-widest">Premium AI</p>
+              <span className="font-heading font-bold text-white text-sm tracking-tight">VoiceRender</span>
+              <span className="block text-[9px] font-bold text-violet-400 uppercase tracking-[0.15em] leading-none">AI Platform</span>
             </div>
           </Link>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="lg:hidden text-white"
+          <button
+            className="lg:hidden text-zinc-500 hover:text-white transition-colors"
             onClick={() => setSidebarOpen(false)}
           >
-            <X className="w-6 h-6" />
-          </Button>
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        <nav className="flex-1 mt-6 px-4 space-y-2 overflow-y-auto">
-          <div className="text-[10px] font-bold text-gray-500 uppercase tracking-widest px-4 mb-4">Main Menu</div>
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            const active = isActive(item.href);
+        {/* Nav */}
+        <nav className="flex-1 overflow-y-auto scrollbar-hide px-3 py-4 space-y-6">
+          {GROUPS.map(({ key, label }) => {
+            const items = NAV_ITEMS.filter(i => i.group === key);
             return (
-              <Link
-                key={item.name}
-                to={item.href}
-                className={`group flex items-center px-4 py-3 text-sm font-medium rounded-2xl transition-all ${active
-                  ? 'bg-brand-violet text-white shadow-[0_10px_20px_-10px_rgba(108,99,255,0.5)]'
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                  }`}
-                onClick={() => setSidebarOpen(false)}
-              >
-                <Icon className={`w-5 h-5 mr-3 transition-colors ${active ? 'text-white' : 'text-gray-500 group-hover:text-brand-violet'
-                  }`} />
-                {item.name}
-                {item.name === 'Calls' && (
-                  <div className="ml-auto flex h-2 w-2">
-                    <span className="animate-ping absolute inline-flex h-2 w-2 rounded-full bg-brand-violet opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-violet"></span>
-                  </div>
-                )}
-                {active && !(item.name === 'Calls') && <div className="ml-auto w-1.5 h-1.5 bg-white rounded-full"></div>}
-              </Link>
+              <div key={key}>
+                <p className="text-[9px] font-bold uppercase tracking-[0.15em] text-zinc-600 px-3 mb-2">{label}</p>
+                <div className="space-y-0.5">
+                  {items.map(item => {
+                    const Icon = item.icon;
+                    const active = isActive(item.href);
+                    return (
+                      <Link
+                        key={item.name}
+                        to={item.href}
+                        onClick={() => setSidebarOpen(false)}
+                        className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${active
+                            ? 'bg-violet-500/10 text-white border border-violet-500/20'
+                            : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.04]'
+                          }`}
+                      >
+                        <Icon
+                          className={`w-4 h-4 shrink-0 transition-colors ${active ? 'text-violet-400' : 'text-zinc-600 group-hover:text-zinc-400'
+                            }`}
+                        />
+                        <span className="flex-1 truncate">{item.name}</span>
+                        {item.live && (
+                          <span className="dot-live w-1.5 h-1.5" />
+                        )}
+                        {active && (
+                          <ChevronRight className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+                        )}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>
 
-        {/* User info at bottom */}
-        <div className="px-4 py-4 border-t border-white/5 mt-auto shrink-0">
-          <div className="bg-white/5 rounded-2xl p-3 mb-3 border border-white/5">
-            <div className="flex items-center space-x-3">
-              <Avatar className="w-9 h-9 border-2 border-brand-violet/20 shrink-0">
-                <AvatarFallback className="bg-brand-violet text-white font-bold text-sm">
-                  {user?.first_name?.[0] || user?.email?.[0]?.toUpperCase()}
-                </AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-bold text-white truncate">
-                  {user?.first_name} {user?.last_name}
-                </p>
-                <p className="text-[10px] text-gray-400 truncate">{user?.email}</p>
-              </div>
-            </div>
-          </div>
-          <Button
-            variant="ghost"
-            onClick={logout}
-            className="w-full h-12 justify-center text-red-400 hover:text-white bg-red-500/10 hover:bg-red-500 border border-red-500/20 hover:border-red-500 rounded-2xl transition-all font-bold text-sm tracking-wide"
+        {/* Balance pill */}
+        <div className="px-3 mb-3 shrink-0">
+          <Link
+            to="/settings"
+            className="flex items-center gap-2.5 p-3 rounded-xl border border-white/[0.06] bg-white/[0.03] hover:bg-violet-500/10 hover:border-violet-500/20 transition-all group"
           >
-            <LogOut className="w-4 h-4 mr-2" />
-            Sign Out
-          </Button>
+            <div className="w-7 h-7 rounded-lg bg-violet-500/15 flex items-center justify-center shrink-0">
+              <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[11px] font-bold text-white leading-none mb-1">Balance</p>
+              <p className="text-[10px] text-zinc-500 leading-none">{balanceMins} min remaining</p>
+            </div>
+            <div className="text-[10px] font-bold text-violet-400 group-hover:text-violet-300 transition-colors">Top Up</div>
+          </Link>
         </div>
-      </div>
 
-      {/* Main content */}
-      <div className="flex-1 flex flex-col overflow-hidden">
-        {/* Top header for mobile */}
-        <header className="bg-brand-black border-b border-white/5 lg:hidden px-4 h-16 flex items-center justify-between shrink-0">
-          <Button
-            variant="ghost"
-            size="sm"
-            className="text-white"
-            onClick={() => setSidebarOpen(true)}
-          >
-            <Menu className="w-6 h-6" />
-          </Button>
-          <div className="flex items-center space-x-2">
-            <div className="w-8 h-8 bg-brand-violet rounded-lg flex items-center justify-center">
-              <Bot className="w-5 h-5 text-white" />
+        {/* User footer */}
+        <div className="px-3 pb-4 border-t border-white/[0.06] pt-3 shrink-0">
+          <div className="flex items-center gap-2.5 mb-3 px-1">
+            <Avatar className="w-8 h-8 shrink-0">
+              <AvatarFallback className="text-[11px] font-bold text-white bg-gradient-to-br from-violet-600 to-violet-800">
+                {user?.first_name?.[0] || user?.email?.[0]?.toUpperCase()}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 min-w-0">
+              <p className="text-[12px] font-bold text-white truncate leading-tight">
+                {user?.first_name} {user?.last_name}
+              </p>
+              <p className="text-[10px] text-zinc-600 truncate">{user?.email}</p>
             </div>
-            <span className="font-bold text-white tracking-tight">VoiceRender</span>
           </div>
-          <Avatar className="w-8 h-8">
-            <AvatarFallback className="bg-brand-violet text-white text-xs">
+          <button
+            onClick={logout}
+            className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-semibold text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/15 transition-all"
+          >
+            <LogOut className="w-3.5 h-3.5" />
+            Sign Out
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Main Area ── */}
+      <div className="flex-1 flex flex-col overflow-hidden">
+        {/* Mobile topbar */}
+        <header className="lg:hidden h-14 flex items-center justify-between px-4 border-b border-white/[0.06] bg-brand-black shrink-0">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="text-zinc-400 hover:text-white transition-colors"
+          >
+            <Menu className="w-5 h-5" />
+          </button>
+          <div className="flex items-center gap-2">
+            <div className="w-7 h-7 bg-gradient-to-br from-violet-600 to-violet-800 rounded-lg flex items-center justify-center">
+              <Zap className="w-3.5 h-3.5 text-white" />
+            </div>
+            <span className="font-heading font-bold text-white text-sm">VoiceRender</span>
+          </div>
+          <Avatar className="w-7 h-7">
+            <AvatarFallback className="text-[10px] font-bold text-white bg-violet-700">
               {user?.first_name?.[0] || user?.email?.[0]?.toUpperCase()}
             </AvatarFallback>
           </Avatar>
         </header>
 
-        {/* Desktop Header / Breadcrumbs */}
-        <header className="hidden lg:flex h-20 items-center justify-between px-10 border-b border-white/5 bg-brand-black shrink-0 relative z-10">
+        {/* Desktop topbar */}
+        <header className="hidden lg:flex h-14 items-center justify-between px-8 border-b border-white/[0.06] bg-brand-black shrink-0">
           <div>
-            <h2 className="text-xl font-bold text-white tracking-tight">Welcome back, {user?.first_name}! 👋</h2>
-            <p className="text-xs text-gray-400">Your AI agents are currently handling 24 active calls.</p>
+            <p className="text-sm font-semibold text-white leading-tight">
+              Good to see you, <span className="text-violet-400">{user?.first_name}</span>
+            </p>
+            <p className="text-[11px] text-zinc-600 leading-tight mt-0.5">AI inbound infrastructure, running 24/7</p>
           </div>
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2 bg-white/5 px-4 py-2 rounded-full border border-white/5">
-              <Sparkles className="w-4 h-4 text-brand-violet" />
-              <span className="text-xs font-bold text-white">Growth Plan: 1,240 mins left</span>
+          <div className="flex items-center gap-3">
+            <div
+              className="flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs font-semibold cursor-pointer transition-all"
+              style={{
+                background: 'rgba(124,58,237,0.08)',
+                borderColor: 'rgba(124,58,237,0.2)',
+                color: '#A78BFA'
+              }}
+            >
+              <Sparkles className="w-3.5 h-3.5" />
+              {balanceMins} mins left
             </div>
-            <Button className="bg-brand-violet hover:bg-brand-violet/90 text-white rounded-full">
-              Upgrade Now
-            </Button>
+            <Link to="/settings">
+              <Button size="sm" className="rounded-lg bg-violet-700 hover:bg-violet-600 text-white text-xs font-bold h-8 px-4 shadow-glow-violet">
+                Top Up
+              </Button>
+            </Link>
           </div>
         </header>
 
         {/* Page content */}
-        <main className="flex-1 overflow-y-auto bg-brand-black p-4 lg:p-10 relative">
-          {/* Subtle background glow for main area */}
-          <div className="absolute top-0 right-0 w-[500px] h-[500px] bg-brand-violet/5 blur-[120px] rounded-full pointer-events-none"></div>
-
-          <div className="relative z-10 max-w-7xl mx-auto animate-reveal">
+        <main className="flex-1 overflow-y-auto bg-brand-black relative">
+          {/* Ambient violet glow */}
+          <div
+            className="absolute top-0 right-0 w-[600px] h-[400px] pointer-events-none"
+            style={{
+              background: 'radial-gradient(ellipse at top right, rgba(124,58,237,0.07) 0%, transparent 60%)',
+            }}
+          />
+          <div className="relative z-10 p-6 lg:p-8 max-w-[1400px] mx-auto animate-reveal">
             <Outlet />
           </div>
-
-          <footer className="mt-20 py-10 border-t border-white/5 text-center text-gray-500 text-xs">
-            <p>&copy; 2026 VoiceRender AI • High-Performance AI Sales Agents</p>
+          <footer className="border-t border-white/[0.04] py-6 text-center">
+            <p className="text-[11px] text-zinc-700">© 2026 VoiceRender AI · Intelligent Inbound Automation</p>
           </footer>
         </main>
       </div>

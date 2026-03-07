@@ -147,118 +147,76 @@ const AgentList = () => {
   };
 
   const AgentCard = ({ agent }) => (
-    <Card className="relative group overflow-hidden border-0 shadow-xl bg-white rounded-[2.5rem] hover:-translate-y-2 transition-all duration-300">
-      <CardHeader className="pb-4 pt-8 px-8">
-        <div className="flex items-start justify-between">
-          <div className="flex items-center space-x-4">
-            <div className={`w-14 h-14 rounded-2xl flex items-center justify-center transition-all ${agent.is_active
-              ? 'bg-brand-violet text-white shadow-[0_10px_15px_-5px_rgba(108,99,255,0.4)]'
-              : 'bg-gray-100 text-gray-400'
-              }`}>
-              <Bot className="w-8 h-8" />
-            </div>
-            <div>
-              <CardTitle className="text-xl font-bold text-brand-black">{agent.name}</CardTitle>
-              <div className="flex items-center space-x-2 mt-1">
-                <Badge
-                  className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 border-0 ${agent.is_active
-                    ? 'bg-emerald-500/10 text-emerald-600'
-                    : 'bg-gray-200 text-gray-500'
-                    }`}
-                >
-                  {agent.is_active ? 'Active' : 'Standby'}
-                </Badge>
-                {agent.signalwire_phone_number && (
-                  <div className="flex items-center text-[10px] font-bold text-brand-violet bg-brand-violet/5 px-2 py-0.5 rounded-full">
-                    <Phone className="w-3 h-3 mr-1" />
-                    {agent.signalwire_phone_number}
-                  </div>
-                )}
-              </div>
-            </div>
+    <div className="card-surface p-6 flex flex-col gap-5 hover-glow-violet transition-all duration-300 group">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className={`w-11 h-11 rounded-xl flex items-center justify-center shrink-0 transition-all ${agent.is_active ? 'bg-violet-500/15' : 'bg-white/[0.05]'}`}>
+            <Bot className={`w-5 h-5 ${agent.is_active ? 'text-violet-400' : 'text-zinc-600'}`} />
+          </div>
+          <div>
+            <h3 className="font-heading font-bold text-white text-sm leading-tight">{agent.name}</h3>
+            <p className="text-[10px] text-zinc-600 mt-0.5">{agent.llm_model}</p>
           </div>
         </div>
-      </CardHeader>
+        <span className={agent.is_active ? 'badge-active' : 'badge-inactive'}>
+          {agent.is_active ? 'Live' : 'Off'}
+        </span>
+      </div>
 
-      <CardContent className="px-8 pb-8 pt-0">
-        <p className="text-gray-500 text-sm mb-6 line-clamp-2 font-medium">
-          {agent.description || "High-performance AI agent configured for semantic conversation and outcome optimization."}
-        </p>
+      {/* Description */}
+      <p className="text-[12px] text-zinc-600 line-clamp-2 leading-relaxed flex-1">
+        {agent.description || 'Inbound AI agent ready to handle customer calls 24/7.'}
+      </p>
 
-        <div className="grid grid-cols-2 gap-4 mb-6">
-          <div className="p-3 bg-gray-50 rounded-2xl border border-gray-100">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Intelligence</span>
-            <p className="text-xs font-bold text-brand-black truncate">{agent.llm_model}</p>
-          </div>
-          <div className="p-3 bg-gray-50 rounded-2xl border border-gray-100">
-            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-widest block mb-1">Vocal Profile</span>
-            <p className="text-xs font-bold text-brand-black truncate">{agent.tts_voice}</p>
-          </div>
+      {/* Meta row */}
+      <div className="grid grid-cols-2 gap-2">
+        <div className="p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.05]">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-700 block mb-0.5">Voice</span>
+          <p className="text-[11px] font-semibold text-zinc-400 truncate">{agent.tts_voice}</p>
         </div>
-
-        <div className="flex items-center justify-between pt-6 border-t border-gray-100">
-          <div className="flex items-center space-x-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => toggleAgentStatus(agent.id, agent.is_active)}
-              className={`rounded-xl h-10 px-4 font-bold transition-all shadow-sm ${agent.is_active
-                ? 'text-orange-500 border-orange-100 hover:bg-orange-50 hover:border-orange-200'
-                : 'text-brand-violet border-brand-violet/20 hover:bg-brand-violet/5 hover:border-brand-violet/40'}`}
-              disabled={loading}
-            >
-              {agent.is_active ? (
-                <>
-                  <Pause className="w-4 h-4 mr-2" />
-                  Pause
-                </>
-              ) : (
-                <>
-                  <Play className="w-4 h-4 mr-2" />
-                  Deploy
-                </>
-              )}
-            </Button>
-
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => duplicateAgent(agent.id)}
-              className="h-10 w-10 text-gray-400 hover:text-brand-violet hover:bg-brand-violet/5 rounded-xl transition-all"
-              disabled={loading}
-            >
-              <Copy className="w-4 h-4" />
-            </Button>
-          </div>
-
-          <div className="flex items-center space-x-1">
-            <Button variant="ghost" size="icon" className="h-10 w-10 text-gray-400 hover:text-brand-black hover:bg-gray-100 rounded-xl transition-all" asChild disabled={loading}>
-              <Link to={`/agents/${agent.id}`}>
-                <Edit className="w-4 h-4" />
-              </Link>
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => deleteAgent(agent.id)}
-              className="h-10 w-10 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-xl transition-all"
-              disabled={loading}
-            >
-              <Trash2 className="w-4 h-4" />
-            </Button>
-          </div>
+        <div className="p-2.5 rounded-lg bg-white/[0.03] border border-white/[0.05]">
+          <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-700 block mb-0.5">Number</span>
+          <p className="text-[11px] font-semibold text-zinc-400 truncate font-mono-ui">{agent.signalwire_phone_number || '—'}</p>
         </div>
-      </CardContent>
-    </Card>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center justify-between pt-4 border-t border-white/[0.05]">
+        <div className="flex items-center gap-1.5">
+          <button
+            onClick={() => toggleAgentStatus(agent.id, agent.is_active)}
+            disabled={loading}
+            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-bold transition-all border ${agent.is_active
+                ? 'text-amber-400 border-amber-500/20 bg-amber-500/10 hover:bg-amber-500/20'
+                : 'text-violet-400 border-violet-500/20 bg-violet-500/10 hover:bg-violet-500/20'
+              }`}
+          >
+            {agent.is_active ? <><Pause className="w-3 h-3" /> Pause</> : <><Play className="w-3 h-3" /> Deploy</>}
+          </button>
+          <button onClick={() => duplicateAgent(agent.id)} disabled={loading} className="p-2 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05] transition-all">
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+        </div>
+        <div className="flex items-center gap-1">
+          <Link to={`/agents/${agent.id}`} className="p-2 rounded-lg text-zinc-600 hover:text-zinc-300 hover:bg-white/[0.05] transition-all">
+            <Edit className="w-3.5 h-3.5" />
+          </Link>
+          <button onClick={() => deleteAgent(agent.id)} disabled={loading} className="p-2 rounded-lg text-zinc-600 hover:text-rose-400 hover:bg-rose-500/10 transition-all">
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      </div>
+    </div>
   );
 
   if (loading && agents.length === 0) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-[60vh]">
-        <div className="w-16 h-16 bg-brand-violet/10 rounded-3xl flex items-center justify-center animate-pulse mb-4">
-          <Bot className="w-8 h-8 text-brand-violet animate-bounce" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center animate-pulse-slow">
+          <Bot className="w-6 h-6 text-violet-400" />
         </div>
-        <p className="text-white font-bold tracking-tight animate-pulse underline decoration-brand-violet decoration-2 underline-offset-4">Syncing Agent Registry...</p>
+        <p className="text-sm font-semibold text-zinc-500">Loading agents…</p>
       </div>
     );
   }
@@ -279,93 +237,68 @@ const AgentList = () => {
   }
 
   return (
-    <div className="space-y-8 animate-reveal">
+    <div className="space-y-7 animate-reveal">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">Agent Registry</h1>
-          <p className="text-gray-400 font-medium">Configure and manage your high-performance AI workforce.</p>
+          <h1 className="text-2xl font-heading font-bold text-white tracking-tight">AI Agents</h1>
+          <p className="text-sm text-zinc-600 mt-0.5">Deploy and manage your inbound AI workforce.</p>
         </div>
-        <Button asChild className="h-12 px-6 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold transition-all active:scale-[0.98]" disabled={loading}>
-          <Link to="/agents/new" className="flex items-center">
-            <Plus className="w-5 h-5 mr-3" />
-            Initialize Agent
-          </Link>
-        </Button>
+        <Link to="/agents/new" className="btn-primary self-start sm:self-auto" disabled={loading}>
+          <Plus className="w-4 h-4" />
+          New Agent
+        </Link>
       </div>
 
       {/* Filters */}
-      <div className="flex flex-col lg:flex-row gap-4">
-        <div className="relative flex-1 group">
-          <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-500 group-focus-within:text-brand-violet transition-colors" />
-          <Input
-            placeholder="Search registry for agents..."
+      <div className="flex flex-col sm:flex-row gap-3">
+        <div className="relative flex-1">
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-600" />
+          <input
+            placeholder="Search agents…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-14 pl-12 bg-white/5 border-white/10 text-white placeholder:text-gray-500 rounded-2xl focus:border-brand-violet focus:ring-brand-violet transition-all"
+            className="form-input pl-9 h-10 w-full"
             disabled={loading}
           />
         </div>
-
-        <div className="flex items-center p-1.5 bg-white/5 border border-white/10 rounded-2xl space-x-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setFilterStatus('all')}
-            className={`rounded-xl px-4 h-10 font-bold transition-all ${filterStatus === 'all' ? 'bg-white text-brand-black shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-            disabled={loading}
-          >
-            All Units <span className="ml-2 opacity-50">{agents.length}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setFilterStatus('active')}
-            className={`rounded-xl px-4 h-10 font-bold transition-all ${filterStatus === 'active' ? 'bg-brand-violet text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-            disabled={loading}
-          >
-            Deployed <span className="ml-2 opacity-50">{agents.filter(a => a.is_active).length}</span>
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setFilterStatus('inactive')}
-            className={`rounded-xl px-4 h-10 font-bold transition-all ${filterStatus === 'inactive' ? 'bg-white text-brand-black shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
-            disabled={loading}
-          >
-            Standby <span className="ml-2 opacity-50">{agents.filter(a => !a.is_active).length}</span>
-          </Button>
+        <div className="flex items-center gap-1 p-1 rounded-xl border border-white/[0.06] bg-white/[0.03]">
+          {[['all', `All (${agents.length})`], ['active', `Live (${agents.filter(a => a.is_active).length})`], ['inactive', `Off (${agents.filter(a => !a.is_active).length})`]].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setFilterStatus(key)}
+              disabled={loading}
+              className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${filterStatus === key
+                  ? 'bg-violet-600 text-white'
+                  : 'text-zinc-500 hover:text-zinc-200 hover:bg-white/[0.05]'
+                }`}
+            >{label}</button>
+          ))}
         </div>
       </div>
 
       {/* Agents Grid */}
       {filteredAgents.length > 0 ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
-          {filteredAgents.map((agent) => (
-            <AgentCard key={agent.id} agent={agent} />
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {filteredAgents.map((agent, i) => (
+            <div key={agent.id} className="animate-reveal" style={{ animationDelay: `${i * 50}ms` }}>
+              <AgentCard agent={agent} />
+            </div>
           ))}
         </div>
       ) : (
-        <div className="flex flex-col items-center justify-center py-20 bg-white/5 border border-dashed border-white/10 rounded-[3rem] text-center px-6">
-          <div className="w-20 h-20 bg-white/5 rounded-[2rem] flex items-center justify-center mb-6">
-            <Bot className="w-10 h-10 text-gray-500" />
+        <div className="card-surface flex flex-col items-center justify-center py-20 text-center">
+          <div className="w-14 h-14 rounded-2xl bg-violet-500/10 flex items-center justify-center mb-4 animate-float">
+            <Bot className="w-7 h-7 text-violet-400" />
           </div>
-          <h3 className="text-2xl font-bold text-white mb-2">
-            {searchQuery || filterStatus !== 'all' ? 'Agent Not Found' : 'Registry Empty'}
+          <h3 className="font-heading font-bold text-white text-lg mb-1">
+            {searchQuery || filterStatus !== 'all' ? 'No matches' : 'No agents yet'}
           </h3>
-          <p className="text-gray-400 mb-8 max-w-sm">
-            {searchQuery || filterStatus !== 'all'
-              ? 'No neural units match your current filter parameters. Try expanding your search.'
-              : 'Secure your competitive advantage by initializing your first AI sales agent today.'
-            }
-          </p>
+          <p className="text-[13px] text-zinc-600 mb-6 max-w-sm">Deploy your first AI agent to start automating inbound calls.</p>
           {(!searchQuery && filterStatus === 'all') && (
-            <Button asChild className="h-14 px-10 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-xl shadow-brand-violet/20 font-bold text-lg" disabled={loading}>
-              <Link to="/agents/new">
-                <Plus className="w-6 h-6 mr-3" />
-                Initialize First Agent
-              </Link>
-            </Button>
+            <Link to="/agents/new" className="btn-primary" disabled={loading}>
+              <Plus className="w-4 h-4" /> Deploy First Agent
+            </Link>
           )}
         </div>
       )}
