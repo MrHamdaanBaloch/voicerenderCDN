@@ -36,7 +36,7 @@ app.include_router(api_router)
 # --- CORS Middleware (Fixed for Local Frontend & Preflight) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://voicerender.vercel.app", "*"], 
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://voicerender.vercel.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,8 +112,14 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
 @app.get("/")
 async def root():
     return {"status": "success", "message": "Voice Agent Service with Database is running."}
+from app.core.webhook_security import verify_twilio_signature, verify_signalwire_signature
+
 @app.post("/incoming_call")
 async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
+    body_bytes = await request.body()
+    if not verify_signalwire_signature(request, body_bytes):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
     body = await request.form()
     call_sid = body.get("CallSid")
     to_number = body.get("To")
@@ -163,6 +169,10 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
 @app.post("/incoming_twilio")
 async def handle_incoming_twilio(request: Request, db: Session = Depends(get_db)):
     """BYOC Endpoint for Twilio clients"""
+    body_bytes = await request.body()
+    if not verify_twilio_signature(request, body_bytes):
+        raise HTTPException(status_code=403, detail="Invalid signature")
+
     body = await request.form()
     call_sid = body.get("CallSid")
     to_number = body.get("To")

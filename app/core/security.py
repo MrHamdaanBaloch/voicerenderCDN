@@ -61,3 +61,22 @@ async def get_current_user_email(token: str = Depends(oauth2_scheme)) -> str:
             headers={"WWW-Authenticate": "Bearer"},
         )
     return email
+
+async def get_current_admin_user(token: str = Depends(oauth2_scheme), db = Depends(get_db)):
+    """
+    Dependency to get the current user, ensuring they have the 'admin' role.
+    """
+    from app.models import User
+    email = await get_current_user_email(token)
+    user = db.query(User).filter(User.email == email).first()
+    if not user:
+         raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="User not found or inactive",
+        )
+    if user.role != "admin":
+         raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not enough permissions to perform this action. Admin role required.",
+        )
+    return user

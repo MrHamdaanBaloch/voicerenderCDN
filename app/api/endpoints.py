@@ -16,7 +16,7 @@ from app.api.schemas import (
 )
 from app.core.security import (
     hash_password, verify_password, create_access_token, get_current_user_email,
-    ACCESS_TOKEN_EXPIRE_MINUTES
+    ACCESS_TOKEN_EXPIRE_MINUTES, get_current_admin_user
 )
 
 router = APIRouter(prefix="/api/v1", tags=["API v1"])
@@ -107,7 +107,7 @@ async def read_users_me(current_user: User = Depends(get_current_user), db: Sess
 @router.post("/agents", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
 async def create_agent(
     agent_data: AgentCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     agent = Agent(
@@ -149,7 +149,7 @@ async def get_agent(
 async def update_agent(
     agent_id: uuid.UUID,
     agent_data: AgentUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     agent = db.query(Agent).filter(
@@ -174,7 +174,7 @@ async def update_agent(
 @router.delete("/agents/{agent_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_agent(
     agent_id: uuid.UUID,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     agent = db.query(Agent).filter(
@@ -305,7 +305,7 @@ class TwilioImportRequest(BaseModel):
 @router.post("/phone-numbers/twilio", response_model=PhoneNumberResponse)
 async def import_twilio_number(
     req: TwilioImportRequest,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_admin_user),
     db: Session = Depends(get_db)
 ):
     # Check if number already exists
@@ -330,7 +330,7 @@ class CheckoutRequest(BaseModel):
 @router.post("/billing/create-checkout-session")
 async def create_checkout(
     req: CheckoutRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
     try:
         result = create_checkout_session(
@@ -349,7 +349,7 @@ class RechargeRequest(BaseModel):
 @router.post("/billing/create-recharge-session")
 async def create_recharge(
     req: RechargeRequest,
-    current_user: User = Depends(get_current_user)
+    current_user: User = Depends(get_current_admin_user)
 ):
     try:
         if req.amount_usd < 5:
