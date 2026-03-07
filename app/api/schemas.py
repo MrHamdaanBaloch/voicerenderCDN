@@ -117,3 +117,21 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     email: Optional[str] = None
+
+# --- Phone Number Schemas ---
+class PhoneNumberBase(BaseModel):
+    phone_number: str = Field(..., max_length=20)
+    provider: str = Field("signalwire", max_length=20)
+    status: str = Field("active", max_length=20)
+    friendly_name: Optional[str] = Field(None, max_length=100)
+
+class PhoneNumberCreate(PhoneNumberBase):
+    pass
+
+class PhoneNumberResponse(PhoneNumberBase):
+    id: uuid.UUID
+    organization_id: uuid.UUID
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

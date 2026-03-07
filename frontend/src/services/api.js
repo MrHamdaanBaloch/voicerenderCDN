@@ -62,9 +62,11 @@ const calls = {
 };
 
 const billing = {
+    getPhoneNumbers: () => api.get('/phone-numbers'),
     searchNumbers: (areaCode = '') => api.get(`/phone-numbers/search${areaCode ? `?area_code=${areaCode}` : ''}`),
     createCheckoutSession: (agentId, phoneNumber) => api.post('/billing/create-checkout-session', { agent_id: agentId, phone_number: phoneNumber }),
     createRechargeSession: (amountUsd) => api.post('/billing/create-recharge-session', { amount_usd: amountUsd }),
+    importTwilioNumber: (phoneNumber, friendlyName) => api.post('/phone-numbers/twilio', { phone_number: phoneNumber, friendly_name: friendlyName }),
 };
 
 export default {

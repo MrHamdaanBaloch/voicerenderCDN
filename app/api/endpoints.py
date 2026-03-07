@@ -9,10 +9,10 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.sql import func
 
 from app.database import get_db
-from app.models import User, Organization, Agent, Call, Transcript, Plan
+from app.models import User, Organization, Agent, Call, Transcript, Plan, PhoneNumber
 from app.api.schemas import (
     UserCreate, UserResponse, Token, AgentCreate, AgentUpdate, AgentResponse,
-    CallResponse, TranscriptResponse
+    CallResponse, TranscriptResponse, PhoneNumberResponse, PhoneNumberCreate
 )
 from app.core.security import (
     hash_password, verify_password, create_access_token, get_current_user_email,
@@ -290,10 +290,42 @@ async def search_numbers(area_code: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-from pydantic import BaseModel
-class CheckoutRequest(BaseModel):
-    agent_id: str
+@router.get("/phone-numbers", response_model=List[PhoneNumberResponse])
+async def list_phone_numbers(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    numbers = db.query(PhoneNumber).filter(PhoneNumber.organization_id == current_user.organization_id).all()
+    return numbers
+
+class TwilioImportRequest(BaseModel):
     phone_number: str
+    friendly_name: Optional[str] = None
+
+@router.post("/phone-numbers/twilio", response_model=PhoneNumberResponse)
+async def import_twilio_number(
+    req: TwilioImportRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Check if number already exists
+    existing = db.query(PhoneNumber).filter(PhoneNumber.phone_number == req.phone_number).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Phone number already imported.")
+        
+    num = PhoneNumber(
+        organization_id=current_user.organization_id,
+        phone_number=req.phone_number,
+        provider="twilio",
+        friendly_name=req.friendly_name
+    )
+    db.add(num)
+    db.commit()
+    db.refresh(num)
+    return num
+class CheckoutRequest(BaseModel):
+    phone_number: str
+    agent_id: Optional[str] = None
 
 @router.post("/billing/create-checkout-session")
 async def create_checkout(
@@ -301,7 +333,12 @@ async def create_checkout(
     current_user: User = Depends(get_current_user)
 ):
     try:
-        result = create_checkout_session(agent_id=req.agent_id, phone_number=req.phone_number, user_email=current_user.email)
+        result = create_checkout_session(
+            org_id=str(current_user.organization_id),
+            phone_number=req.phone_number, 
+            user_email=current_user.email,
+            agent_id=req.agent_id
+        )
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

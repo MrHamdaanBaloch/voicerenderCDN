@@ -4,7 +4,7 @@ import logging
 from fastapi import HTTPException
 from app.services.signalwire import purchase_number, configure_number_webhook
 from app.database import SessionLocal
-from app.models import Agent, Organization
+from app.models import Agent, Organization, PhoneNumber
 
 logger = logging.getLogger("StripeService")
 
@@ -14,12 +14,16 @@ STRIPE_WEBHOOK_SECRET = os.getenv("STRIPE_WEBHOOK_SECRET", "whsec_dummy")
 STRIPE_PHONE_NUMBER_PRICE_ID = os.getenv("STRIPE_PRICE_ID", "price_dummy") # The $5/month product ID
 FRONTEND_URL = os.getenv("PUBLIC_URL_BASE", "http://localhost:3000")
 
-def create_checkout_session(agent_id: str, phone_number: str, user_email: str):
+def create_checkout_session(org_id: str, phone_number: str, user_email: str, agent_id: str = None):
     """
     Creates a Stripe Checkout Session to subscribe to a phone number.
-    Stores the agent_id and phone_number in metadata so the webhook knows what to provision.
+    Stores the org_id, agent_id (optional), and phone_number in metadata so the webhook knows what to provision.
     """
     try:
+        success_url = f"{FRONTEND_URL}/dashboard/phone-numbers?checkout_success=true&phone_number={phone_number}"
+        if agent_id:
+            success_url = f"{FRONTEND_URL}/dashboard/agents?checkout_success=true&agent_id={agent_id}"
+
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
             customer_email=user_email,
@@ -29,9 +33,10 @@ def create_checkout_session(agent_id: str, phone_number: str, user_email: str):
             }],
             mode='subscription',
             success_url=f"{FRONTEND_URL}/dashboard/agents?checkout_success=true&agent_id={agent_id}",
-            cancel_url=f"{FRONTEND_URL}/dashboard/agents?checkout_cancelled=true",
+            cancel_url=f"{FRONTEND_URL}/dashboard/phone-numbers?checkout_cancelled=true",
             metadata={
-                "agent_id": str(agent_id),
+                "org_id": str(org_id),
+                "agent_id": str(agent_id) if agent_id else "",
                 "phone_number": phone_number,
                 "type": "phone_number_subscription"
             }
@@ -99,9 +104,9 @@ def handle_stripe_webhook(payload: bytes, sig_header: str):
         if metadata.get("type") == "phone_number_subscription":
             phone_number = metadata.get("phone_number")
             agent_id = metadata.get("agent_id")
-            subscription_id = session.get("subscription")
+            org_id = metadata.get("org_id")
             
-            logger.info(f"Checkout completed for {phone_number} on Agent {agent_id}. Provisioning via SignalWire...")
+            logger.info(f"Checkout completed for {phone_number} on Org {org_id}. Provisioning via SignalWire...")
             
             try:
                 # 1. Buy the number on SignalWire
@@ -113,16 +118,26 @@ def handle_stripe_webhook(payload: bytes, sig_header: str):
                 webhook_url = f"{clean_url}/incoming_call" 
                 configure_number_webhook(sid, webhook_url)
                 
-                # 3. Update the Agent in our Database to hold the new phone number
+                # 3. Update the Database
                 db = SessionLocal()
-                agent = db.query(Agent).filter(Agent.id == agent_id).first()
-                if agent:
-                    agent.signalwire_phone_number = phone_number
-                    # You could optionally store subscription_id here if you added a field for it
-                    db.commit()
+                # Create PhoneNumber record
+                new_num = PhoneNumber(
+                    organization_id=org_id,
+                    phone_number=phone_number,
+                    provider="signalwire"
+                )
+                db.add(new_num)
+                
+                # If agent_id was provided (from legacy flow), update the agent too
+                if agent_id:
+                    agent = db.query(Agent).filter(Agent.id == agent_id).first()
+                    if agent:
+                        agent.signalwire_phone_number = phone_number
+                
+                db.commit()
                 db.close()
                 
-                logger.info(f"Successfully provisioned and attached {phone_number} to agent {agent_id}.")
+                logger.info(f"Successfully provisioned and attached {phone_number}.")
             except Exception as e:
                 logger.error(f"Provisioning failed after successful payment: {e}")
                 # In a real production app, you might want to queue a retry or notify an admin here.

@@ -28,7 +28,8 @@ import {
   Check,
   Search,
   CreditCard,
-  Loader2
+  Loader2,
+  Hash
 } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/use-toast';
@@ -65,10 +66,8 @@ const AgentForm = () => {
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
 
-  // Phone number provisioning state
-  const [availableNumbers, setAvailableNumbers] = useState([]);
-  const [isSearchingNumbers, setIsSearchingNumbers] = useState(false);
-  const [areaCodeSearch, setAreaCodeSearch] = useState('');
+  // Phone numbers state
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
 
   const tabOrder = ['basic', 'voice', 'advanced', 'phone'];
   const tabLabels = { basic: 'Identity', voice: 'Vocal/AI', advanced: 'Neural', phone: 'Gateway' };
@@ -143,28 +142,18 @@ const AgentForm = () => {
     fetchAgent();
   }, [id, isEditing, toast]);
 
-  // Handle Stripe Checkout redirects
+  // Fetch Organization Phone Numbers
   useEffect(() => {
-    const searchParams = new URLSearchParams(location.search);
-    const checkoutSuccess = searchParams.get('checkout_success');
-    const checkoutCancelled = searchParams.get('checkout_cancelled');
-
-    if (checkoutSuccess === 'true') {
-      toast({
-        title: "Number Purchased! 🎉",
-        description: "Your new dedicated number has been provisioned and linked to this agent. It may take a minute to activate.",
-      });
-      // Clean up URL
-      window.history.replaceState({}, document.title, window.location.pathname);
-    } else if (checkoutCancelled === 'true') {
-      toast({
-        title: "Checkout Cancelled",
-        description: "You cancelled the phone number purchase.",
-        variant: "destructive",
-      });
-      window.history.replaceState({}, document.title, window.location.pathname);
-    }
-  }, [location, toast]);
+    const fetchPhoneNumbers = async () => {
+      try {
+        const res = await api.billing.getPhoneNumbers();
+        setPhoneNumbers(res.data);
+      } catch (err) {
+        console.error("Failed to load phone numbers.", err);
+      }
+    };
+    fetchPhoneNumbers();
+  }, []);
 
   const handleInputChange = (field, value) => {
     setFormData(prev => ({
@@ -221,44 +210,7 @@ const AgentForm = () => {
     alert('Test call functionality would be implemented here. This would simulate a call with the current agent configuration.');
   };
 
-  const handleSearchNumbers = async () => {
-    setIsSearchingNumbers(true);
-    try {
-      const response = await api.billing.searchNumbers(areaCodeSearch);
-      setAvailableNumbers(response.data);
-    } catch (err) {
-      toast({
-        title: "Search Failed",
-        description: "Could not find available numbers.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsSearchingNumbers(false);
-    }
-  };
 
-  const handleBuyNumber = async (phoneNumber) => {
-    try {
-      if (!isEditing || !id) {
-        toast({
-          title: "Action Required",
-          description: "Please deploy (save) this agent first before purchasing a dedicated number.",
-          variant: "destructive",
-        });
-        return;
-      }
-      const response = await api.billing.createCheckoutSession(id, phoneNumber);
-      if (response.data && response.data.url) {
-        window.location.href = response.data.url;
-      }
-    } catch (err) {
-      toast({
-        title: "Checkout Failed",
-        description: "Could not initiate secure secure checkout session.",
-        variant: "destructive",
-      });
-    }
-  };
 
   if (loading && isEditing) {
     return (
@@ -595,61 +547,37 @@ const AgentForm = () => {
                 <CardDescription className="text-base font-medium">Link this agent to your global communication infrastructure.</CardDescription>
               </CardHeader>
               <CardContent className="p-10 pt-0 space-y-8">
-                <div className="space-y-3 max-w-xl">
-                  <Label htmlFor="phone_number" className="text-xs font-bold uppercase tracking-widest text-gray-400">Assigned Inbound Number</Label>
-                  <Input
-                    id="phone_number"
-                    placeholder="+1 (888) VOICE-AI"
-                    value={formData.signalwire_phone_number}
-                    onChange={(e) => handleInputChange('signalwire_phone_number', e.target.value)}
-                    className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold text-lg"
-                  />
-                  <p className="text-sm text-gray-500 font-medium">
-                    Numbers can be dynamically routed through the SignalWire provisioning system.
-                  </p>
-                </div>
-
-                <div className="pt-8 border-t border-gray-100">
-                  <h3 className="text-lg font-bold text-brand-black mb-4">Or Provision a New Dedicated Number</h3>
-                  <div className="flex gap-4 mb-6">
-                    <Input
-                      placeholder="Area code (e.g., 888)"
-                      value={areaCodeSearch}
-                      onChange={(e) => setAreaCodeSearch(e.target.value)}
-                      className="h-14 border-gray-100 bg-gray-50 rounded-2xl w-48 font-bold text-lg"
-                    />
-                    <Button
-                      type="button"
-                      onClick={handleSearchNumbers}
-                      disabled={isSearchingNumbers}
-                      className="h-14 px-8 bg-brand-black hover:bg-gray-800 text-white rounded-2xl font-bold"
-                    >
-                      {isSearchingNumbers ? <Loader2 className="w-5 h-5 animate-spin" /> : <Search className="w-5 h-5 mr-2" />}
-                      Search Numbers
-                    </Button>
+                <div className="space-y-6 max-w-xl">
+                  <div className="space-y-3">
+                    <Label htmlFor="phone_number" className="text-xs font-bold uppercase tracking-widest text-gray-400">Assigned Inbound Number</Label>
+                    <Select value={formData.signalwire_phone_number || "none"} onValueChange={(value) => handleInputChange('signalwire_phone_number', value === "none" ? null : value)}>
+                      <SelectTrigger className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold text-base">
+                        <SelectValue placeholder="Select a phone number..." />
+                      </SelectTrigger>
+                      <SelectContent className="rounded-2xl border-gray-100 shadow-xl">
+                        <SelectItem value="none" className="py-3 rounded-xl focus:bg-brand-violet/5">
+                          None
+                        </SelectItem>
+                        {phoneNumbers.map((num) => (
+                          <SelectItem key={num.id} value={num.phone_number} className="py-3 rounded-xl focus:bg-brand-violet/5">
+                            {num.phone_number} {num.friendly_name ? `(${num.friendly_name})` : ''} - {num.provider}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
 
-                  {availableNumbers.length > 0 && (
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {availableNumbers.map((num, idx) => (
-                        <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-gray-50 border border-gray-100 rounded-2xl hover:border-brand-violet transition-colors">
-                          <div className="mb-3 sm:mb-0">
-                            <p className="font-bold text-lg text-brand-black">{num.phone_number}</p>
-                            <p className="text-xs text-gray-500 font-medium capitalize">{num.locality || 'US Local'} {num.region ? `, ${num.region}` : ''}</p>
-                          </div>
-                          <Button
-                            type="button"
-                            onClick={() => handleBuyNumber(num.phone_number)}
-                            variant="outline"
-                            className="bg-white border-brand-violet/20 hover:bg-brand-violet hover:text-white text-brand-violet font-bold rounded-xl transition-all"
-                          >
-                            <CreditCard className="w-4 h-4 mr-2" />
-                            Buy for $5/mo
-                          </Button>
-                        </div>
-                      ))}
+                  <div className="p-5 bg-brand-violet/5 border border-brand-violet/20 rounded-2xl flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+                    <div>
+                      <h4 className="font-bold text-brand-black flex items-center mb-1">
+                        <Hash className="w-4 h-4 mr-2 text-brand-violet" /> Need more numbers?
+                      </h4>
+                      <p className="text-xs text-gray-500 font-medium">Head over to the Phone Numbers dashboard to buy or import more.</p>
                     </div>
-                  )}
+                    <Button type="button" variant="outline" className="shrink-0 bg-white border-brand-violet/20 text-brand-violet hover:bg-brand-violet hover:text-white rounded-xl font-bold" asChild>
+                      <Link to="/phone-numbers">Manage Numbers</Link>
+                    </Button>
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 align-top border-t border-gray-100">

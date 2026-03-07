@@ -14,7 +14,8 @@ import {
   LogOut,
   Menu,
   X,
-  Sparkles
+  Sparkles,
+  Hash
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -27,6 +28,7 @@ const DashboardLayout = () => {
     { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
     { name: 'Agents', href: '/agents', icon: Bot },
     { name: 'Calls', href: '/calls', icon: Phone },
+    { name: 'Numbers', href: '/phone-numbers', icon: Hash },
     { name: 'Reports', href: '/reports', icon: BarChart3 },
     { name: 'Team', href: '/settings/users', icon: Users },
     { name: 'API Keys', href: '/settings/api-keys', icon: Key },

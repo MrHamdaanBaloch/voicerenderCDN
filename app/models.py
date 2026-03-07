@@ -21,6 +21,7 @@ class Organization(Base):
     agents = relationship("Agent", back_populates="organization")
     calls = relationship("Call", back_populates="organization")
     api_keys = relationship("APIKey", back_populates="organization")
+    phone_numbers = relationship("PhoneNumber", back_populates="organization")
     plan = relationship("Plan", back_populates="organizations")
 
 class Plan(Base):
@@ -131,3 +132,16 @@ class APIKey(Base):
     permissions = Column(JSONB, nullable=False, default=[]) # e.g., ["create_call", "read_calls"]
 
     organization = relationship("Organization", back_populates="api_keys")
+
+class PhoneNumber(Base):
+    __tablename__ = "phone_numbers"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    organization_id = Column(UUID(as_uuid=True), ForeignKey("organizations.id"), nullable=False)
+    phone_number = Column(String, nullable=False, unique=True, index=True) # E.g., "+18885551234"
+    provider = Column(String, default="signalwire") # "signalwire" or "twilio"
+    status = Column(String, default="active") # "active", "pending", "disabled"
+    friendly_name = Column(String, nullable=True) # Optional user-assigned name
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    organization = relationship("Organization", back_populates="phone_numbers")

@@ -13,6 +13,7 @@ import CallDetails from "./components/Calls/CallDetails"; // Import CallDetails
 import Reports from "./components/Reports/Reports";
 import Teams from "./components/Settings/Teams";
 import Settings from "./components/Settings/Settings";
+import PhoneNumbers from "./components/PhoneNumbers/PhoneNumbers";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "./components/ui/toaster"; // Assuming you have a Toaster component
 
@@ -55,6 +56,7 @@ function App() {
                 <Route path="reports" element={<Reports />} />
                 <Route path="settings/users" element={<Teams />} />
                 {/* Placeholder routes - to be implemented */}
+                <Route path="phone-numbers" element={<PhoneNumbers />} />
                 <Route path="settings/api-keys" element={<div className="p-6"><h1 className="text-2xl font-bold">API Keys (Coming Soon)</h1><p className="text-gray-600 mt-2">Generate and manage API keys for integration.</p></div>} />
                 <Route path="settings" element={<Settings />} />
               </Route>

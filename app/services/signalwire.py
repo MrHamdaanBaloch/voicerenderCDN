@@ -19,9 +19,13 @@ def _get_auth():
 
 def search_available_numbers(area_code: str = None, limit: int = 10):
     """
-    Search for available local US numbers.
+    Search for available local or toll-free US numbers.
     """
-    url = f"{BASE_URL}/AvailablePhoneNumbers/US/Local.json"
+    endpoint = "Local"
+    if area_code and area_code in ["800", "888", "877", "866", "855", "844", "833"]:
+        endpoint = "TollFree"
+        
+    url = f"{BASE_URL}/AvailablePhoneNumbers/US/{endpoint}.json"
     params = {}
     if area_code:
         params["AreaCode"] = area_code
