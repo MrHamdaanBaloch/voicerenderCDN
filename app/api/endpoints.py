@@ -2,10 +2,11 @@ import uuid
 from datetime import timedelta
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.sql import func
 
 from app.database import get_db
 from app.models import User, Organization, Agent, Call, Transcript, Plan
@@ -245,11 +246,29 @@ async def get_dashboard_stats(
         {"month": "Jul", "calls": total_calls}
     ]
 
+    # Active calls (currently in progress)
+    active_calls = db.query(Call).filter(
+        Call.organization_id == current_user.organization_id,
+        Call.status == 'in_progress'
+    ).count()
+
+    # Calculate average call duration for completed calls
+    avg_duration_result = db.query(func.avg(Call.duration_seconds)).filter(
+        Call.organization_id == current_user.organization_id,
+        Call.status == 'completed',
+        Call.duration_seconds.isnot(None)
+    ).scalar()
+    
+    avg_duration_seconds = int(avg_duration_result) if avg_duration_result else 0
+    minutes = avg_duration_seconds // 60
+    seconds = avg_duration_seconds % 60
+    avg_call_duration = f"{minutes}:{seconds:02d}"
+
     return {
         "totalCalls": total_calls,
         "successRate": round(success_rate, 1),
-        "avgCallDuration": "0:00", # Placeholder
-        "activeCalls": 0, # Placeholder
+        "avgCallDuration": avg_call_duration,
+        "activeCalls": active_calls,
         "activeAgents": active_agents,
         "recentCalls": recent_calls,
         "monthlyCallVolume": chart_data

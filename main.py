@@ -17,8 +17,8 @@ from signalwire.voice_response import VoiceResponse, Start
 from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 
 # --- Import Database Logic ---
-from app.database import get_db
-from app.models import User, Organization
+from app.database import get_db, SessionLocal
+from app.models import User, Organization, Agent, Call, Transcript
 from app.api.endpoints import router as api_router # Import the API router
 
 # --- Load Environment Variables & Configuration ---
@@ -35,7 +35,7 @@ app.include_router(api_router)
 # --- CORS Middleware (Fixed for Local Frontend & Preflight) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001"], 
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://voicerender.vercel.app", "*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -112,9 +112,35 @@ async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audi
 async def root():
     return {"status": "success", "message": "Voice Agent Service with Database is running."}
 @app.post("/incoming_call")
-async def handle_incoming_call(request: Request):
+async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     body = await request.form()
     call_sid = body.get("CallSid")
+    to_number = body.get("To")
+    from_number = body.get("From")
+    
+    # Try to find agent by phone number, otherwise get the first active one
+    agent = db.query(Agent).filter(Agent.signalwire_phone_number == to_number, Agent.is_active == True).first()
+    if not agent:
+        agent = db.query(Agent).filter(Agent.is_active == True).first()
+        
+    if not agent:
+        logger.error("No active agent found for incoming call")
+        # Still proceed, maybe use fallback later, but DB will fail without agent_id
+        # In this demo, we assume at least one agent exists
+
+    # Create the Call record
+    if agent:
+        new_call = Call(
+            agent_id=agent.id,
+            organization_id=agent.organization_id,
+            call_sid=call_sid,
+            from_number=from_number,
+            to_number=to_number,
+            status="in_progress"
+        )
+        db.add(new_call)
+        db.commit()
+
     response = VoiceResponse()
     
     clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
@@ -134,6 +160,10 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     stream_sid = None
     dg_connection = None
     buffered_frames = []
+    
+    # We need a manual DB session for Websockets
+    db = SessionLocal()
+    call_record = db.query(Call).filter(Call.call_sid == call_sid).first()
 
     async def start_deepgram_connection():
         nonlocal dg_connection
@@ -141,8 +171,22 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             dg_connection = deepgram_client.listen.asynclive.v("1")
 
             async def on_message(self, result, **kwargs):
-                if result.channel.alternatives[0].transcript:
-                    logger.info(f"Transcript: {result.channel.alternatives[0].transcript}")
+                transcript_text = result.channel.alternatives[0].transcript
+                if transcript_text:
+                    logger.info(f"Transcript: {transcript_text}")
+                    if call_record:
+                        try:
+                            t = Transcript(
+                                call_id=call_record.id,
+                                speaker="user",
+                                text=transcript_text,
+                                confidence=result.channel.alternatives[0].confidence
+                            )
+                            db.add(t)
+                            db.commit()
+                        except Exception as db_err:
+                            logger.error(f"Failed to save user transcript: {db_err}")
+                            db.rollback()
 
             async def on_open(self, open, **kwargs):
                 deepgram_ready.set()
@@ -168,6 +212,17 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             if event == 'start':
                 stream_sid = data['start']['streamSid']
                 greeting_text = "Hello! Welcome to the voice agent."
+                
+                # Save agent greeting to DB
+                if call_record:
+                    try:
+                        t = Transcript(call_id=call_record.id, speaker="agent", text=greeting_text)
+                        db.add(t)
+                        db.commit()
+                    except Exception as db_err:
+                        logger.error(f"Failed to save agent transcript: {db_err}")
+                        db.rollback()
+
                 tts_audio = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
                 asyncio.create_task(send_audio_payload_chunked(websocket, stream_sid, tts_audio, call_sid=call_sid))
 
@@ -189,3 +244,16 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             await dg_connection.finish()
         deepgram_task.cancel()
         await websocket.close()
+        
+        # Complete the call in DB
+        if call_record:
+            try:
+                from datetime import datetime
+                call_record.status = "completed"
+                call_record.end_time = datetime.utcnow()
+                call_record.duration_seconds = (call_record.end_time - call_record.start_time).seconds
+                db.commit()
+            except Exception as e:
+                logger.error(f"Failed to update call status on close: {e}")
+                db.rollback()
+        db.close()
