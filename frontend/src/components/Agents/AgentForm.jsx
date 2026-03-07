@@ -1,35 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate, useLocation, Link } from 'react-router-dom';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../ui/card';
-import { Button } from '../ui/button';
-import { Input } from '../ui/input';
-import { Textarea } from '../ui/textarea';
 import { Label } from '../ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
+import { Textarea } from '../ui/textarea';
+import { Button } from '../ui/button';
 import { Switch } from '../ui/switch';
-import { Badge } from '../ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import {
-  ArrowLeft,
-  Save,
-  Play,
-  Bot,
-  Mic,
-  Brain,
-  Phone,
-  Settings as SettingsIcon,
-  TestTube,
-  Zap,
-  Cpu,
-  ShieldCheck,
-  ArrowRight,
-  ChevronLeft,
-  ChevronRight,
-  Check,
-  Search,
-  CreditCard,
-  Loader2,
-  Hash
+  ArrowLeft, Save, Bot, Mic, Brain, Phone, Settings as SettingsIcon,
+  TestTube, Zap, Cpu, ShieldCheck, ChevronLeft, ChevronRight, Check, Hash, Loader2
 } from 'lucide-react';
 import api from '../../services/api';
 import { useToast } from '../../hooks/use-toast';
@@ -38,7 +17,6 @@ import { getErrorMessage } from '../../lib/utils';
 const AgentForm = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const location = useLocation();
   const isEditing = Boolean(id);
   const { toast } = useToast();
 
@@ -49,608 +27,437 @@ const AgentForm = () => {
     tts_model: 'playai-tts',
     tts_voice: 'Fritz-PlayAI',
     deepgram_model: 'nova-2-phonecall',
-    system_prompt: 'You are a helpful, professional, and concise AI assistant. Respond naturally, like a human, keeping your responses under 20 words. Maintain a positive and engaging tone, and always strive to provide value to the user.',
-    deepgram_config: {
-      utterance_end_ms: '1000',
-      endpointing: '1500',
-      filler_words: true
-    },
+    system_prompt: 'You are a helpful, professional, and concise AI assistant. Respond naturally, keeping responses under 20 words. Maintain a positive and engaging tone.',
+    deepgram_config: { utterance_end_ms: '1000', endpointing: '1500', filler_words: true },
     silence_timeout_seconds: 7,
-    silence_prompt_text: "Are you still there? How can I help?",
+    silence_prompt_text: 'Are you still there? How can I help?',
     is_active: false,
-    signalwire_phone_number: ''
+    signalwire_phone_number: '',
   });
 
   const [isSaving, setIsSaving] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [activeTab, setActiveTab] = useState('basic');
-
-  // Phone numbers state
   const [phoneNumbers, setPhoneNumbers] = useState([]);
 
   const tabOrder = ['basic', 'voice', 'advanced', 'phone'];
-  const tabLabels = { basic: 'Identity', voice: 'Vocal/AI', advanced: 'Neural', phone: 'Gateway' };
-  const tabIcons = { basic: Bot, voice: Mic, advanced: SettingsIcon, phone: Phone };
-  const currentStepIndex = tabOrder.indexOf(activeTab);
-  const isFirstStep = currentStepIndex === 0;
-  const isLastStep = currentStepIndex === tabOrder.length - 1;
-  const goNext = () => !isLastStep && setActiveTab(tabOrder[currentStepIndex + 1]);
-  const goPrev = () => !isFirstStep && setActiveTab(tabOrder[currentStepIndex - 1]);
+  const tabMeta = {
+    basic: { label: 'Identity', icon: Bot },
+    voice: { label: 'Vocal/AI', icon: Mic },
+    advanced: { label: 'Neural', icon: SettingsIcon },
+    phone: { label: 'Gateway', icon: Phone },
+  };
+  const idx = tabOrder.indexOf(activeTab);
+  const isFirst = idx === 0;
+  const isLast = idx === tabOrder.length - 1;
 
   const llmModels = [
     { value: 'llama3-8b-8192', label: 'Llama 3 8B (Fast)' },
     { value: 'llama3-70b-8192', label: 'Llama 3 70B (Advanced)' },
     { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B' },
   ];
-
   const ttsVoices = [
-    { value: 'Fritz-PlayAI', label: 'Fritz (PlayAI Male)' },
-    { value: 'Sarah-PlayAI', label: 'Sarah (PlayAI Female)' },
+    { value: 'Fritz-PlayAI', label: 'Fritz (Male · PlayAI)' },
+    { value: 'Sarah-PlayAI', label: 'Sarah (Female · PlayAI)' },
     { value: 'Mike-PlayAI', label: 'Mike (Professional Male)' },
     { value: 'Emma-PlayAI', label: 'Emma (Friendly Female)' },
     { value: 'James-PlayAI', label: 'James (Authoritative Male)' },
   ];
-
   const deepgramModels = [
-    { value: 'nova-2-phonecall', label: 'Nova 2 Phone Call (Optimized for calls)' },
+    { value: 'nova-2-phonecall', label: 'Nova 2 Phone Call (Optimized)' },
     { value: 'nova-2-general', label: 'Nova 2 General (High accuracy)' },
     { value: 'enhanced', label: 'Enhanced (Legacy)' },
   ];
 
   useEffect(() => {
-    const fetchAgent = async () => {
+    const load = async () => {
       if (isEditing) {
-        setLoading(true);
-        setError(null);
         try {
-          const response = await api.agents.getAgent(id);
-          const agent = response.data;
+          const res = await api.agents.getAgent(id);
+          const a = res.data;
           setFormData({
-            name: agent.name,
-            description: agent.description || '',
-            llm_model: agent.llm_model,
-            tts_model: agent.tts_model,
-            tts_voice: agent.tts_voice,
-            deepgram_model: agent.deepgram_model,
-            system_prompt: agent.system_prompt,
-            deepgram_config: agent.deepgram_config || {
-              utterance_end_ms: '1000',
-              endpointing: '1500',
-              filler_words: true
-            },
-            silence_timeout_seconds: agent.silence_timeout_seconds,
-            silence_prompt_text: agent.silence_prompt_text || '',
-            is_active: agent.is_active,
-            signalwire_phone_number: agent.signalwire_phone_number || ''
+            name: a.name, description: a.description || '',
+            llm_model: a.llm_model, tts_model: a.tts_model,
+            tts_voice: a.tts_voice, deepgram_model: a.deepgram_model,
+            system_prompt: a.system_prompt,
+            deepgram_config: a.deepgram_config || { utterance_end_ms: '1000', endpointing: '1500', filler_words: true },
+            silence_timeout_seconds: a.silence_timeout_seconds,
+            silence_prompt_text: a.silence_prompt_text || '',
+            is_active: a.is_active,
+            signalwire_phone_number: a.signalwire_phone_number || '',
           });
         } catch (err) {
-          console.error("Failed to fetch agent:", err);
-          setError("Failed to load agent details. Please try again.");
-          toast({
-            title: "Error",
-            description: "Failed to load agent details.",
-            variant: "destructive",
-          });
-        } finally {
-          setLoading(false);
+          setError('Failed to load agent.');
+          toast({ title: 'Error', description: 'Failed to load agent.', variant: 'destructive' });
         }
-      } else {
-        setLoading(false);
       }
+      setLoading(false);
     };
-    fetchAgent();
+    load();
   }, [id, isEditing, toast]);
 
-  // Fetch Organization Phone Numbers
   useEffect(() => {
-    const fetchPhoneNumbers = async () => {
-      try {
-        const res = await api.billing.getPhoneNumbers();
-        setPhoneNumbers(res.data);
-      } catch (err) {
-        console.error("Failed to load phone numbers.", err);
-      }
-    };
-    fetchPhoneNumbers();
+    api.billing.getPhoneNumbers().then(r => setPhoneNumbers(r.data)).catch(() => { });
   }, []);
 
-  const handleInputChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value
-    }));
-  };
-
-  const handleDeepgramConfigChange = (field, value) => {
-    setFormData(prev => ({
-      ...prev,
-      deepgram_config: {
-        ...prev.deepgram_config,
-        [field]: value
-      }
-    }));
-  };
+  const set = (field, val) => setFormData(p => ({ ...p, [field]: val }));
+  const setDg = (field, val) => setFormData(p => ({ ...p, deepgram_config: { ...p.deepgram_config, [field]: val } }));
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setIsSaving(true);
-    setError(null);
-
     try {
-      if (isEditing) {
-        await api.agents.updateAgent(id, formData);
-        toast({
-          title: "Agent Updated",
-          description: "Agent configuration has been saved successfully.",
-        });
-      } else {
-        await api.agents.createAgent(formData);
-        toast({
-          title: "Agent Created",
-          description: "New agent has been created successfully.",
-        });
-      }
+      if (isEditing) await api.agents.updateAgent(id, formData);
+      else await api.agents.createAgent(formData);
+      toast({ title: isEditing ? 'Agent Updated' : 'Agent Deployed', description: 'Configuration saved.' });
       navigate('/agents');
     } catch (err) {
-      console.error("Failed to save agent:", err);
-      const errorMessage = getErrorMessage(err, "Failed to save agent details.");
-      setError(errorMessage);
-      toast({
-        title: "Error",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      const msg = getErrorMessage(err, 'Failed to save agent.');
+      setError(msg);
+      toast({ title: 'Error', description: msg, variant: 'destructive' });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleTest = () => {
-    alert('Test call functionality would be implemented here. This would simulate a call with the current agent configuration.');
-  };
-
-
+  /* ── Shared input class ── */
+  const inp = 'form-input h-11 w-full';
+  const sel = 'h-11 border-white/[0.06] bg-white/[0.04] text-white rounded-xl font-semibold';
+  const selContent = 'rounded-xl border-white/[0.1] bg-[#18181b] text-white';
+  const selItem = 'py-2.5 focus:bg-violet-500/10 focus:text-violet-300';
+  const lbl = 'text-[10px] font-bold uppercase tracking-[0.15em] text-zinc-600';
 
   if (loading && isEditing) {
     return (
-      <div className="p-6 flex flex-col items-center justify-center h-[60vh]">
-        <div className="w-16 h-16 bg-brand-violet/10 rounded-3xl flex items-center justify-center animate-pulse mb-4">
-          <Cpu className="w-8 h-8 text-brand-violet animate-spin" />
+      <div className="flex flex-col items-center justify-center h-[60vh] gap-4">
+        <div className="w-12 h-12 rounded-2xl bg-violet-500/10 flex items-center justify-center animate-pulse-slow">
+          <Cpu className="w-6 h-6 text-violet-400" />
         </div>
-        <p className="text-white font-bold tracking-tight animate-pulse underline decoration-brand-violet decoration-2 underline-offset-4">Accessing Agent Core...</p>
+        <p className="text-sm font-semibold text-zinc-500">Loading agent…</p>
       </div>
     );
   }
 
   return (
-    <div className="space-y-8 animate-reveal max-w-5xl mx-auto">
-      {/* Header */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-6">
-        <div className="flex items-center space-x-6">
-          <Button variant="ghost" size="icon" className="w-12 h-12 bg-white/5 border border-white/10 rounded-2xl text-gray-400 hover:text-white hover:bg-white/10 transition-all" asChild>
-            <Link to="/agents">
-              <ArrowLeft className="w-6 h-6" />
-            </Link>
-          </Button>
+    <div className="space-y-7 animate-reveal max-w-5xl mx-auto">
+      {/* ── Header ── */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div className="flex items-center gap-4">
+          <Link to="/agents" className="p-2.5 rounded-xl border border-white/[0.08] bg-white/[0.04] text-zinc-600 hover:text-white hover:bg-white/[0.07] transition-all">
+            <ArrowLeft className="w-4 h-4" />
+          </Link>
           <div>
-            <h1 className="text-3xl font-bold text-white tracking-tight">
-              {isEditing ? 'Agent Tuning' : 'Agent Initialization'}
+            <h1 className="text-2xl font-heading font-bold text-white tracking-tight">
+              {isEditing ? 'Edit Agent' : 'New Agent'}
             </h1>
-            <p className="text-gray-400 font-medium">
-              {isEditing ? `Refining ${formData.name}'s performance parameters.` : 'Architecting a new high-performance AI entity.'}
+            <p className="text-xs text-zinc-600 mt-0.5">
+              {isEditing ? `Editing: ${formData.name}` : 'Configure your inbound AI agent.'}
             </p>
           </div>
         </div>
-
-        <div className="flex items-center space-x-3">
-          <Button variant="outline" onClick={handleTest} disabled={!formData.name} className="h-12 px-6 rounded-2xl border-white/10 text-white bg-white/5 hover:bg-white/10 hover:border-brand-violet/50 font-bold transition-all">
-            <TestTube className="w-5 h-5 mr-3 text-brand-violet" />
-            Unit Test
-          </Button>
+        <div className="flex items-center gap-2">
           <Button
-            type="submit"
-            form="agent-form"
+            type="submit" form="agent-form"
             disabled={isSaving || !formData.name}
-            className="h-12 px-8 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold transition-all active:scale-[0.98]"
+            className="btn-primary h-10 px-5 disabled:opacity-60"
           >
-            {isSaving ? (
-              <>
-                <div className="w-5 h-5 mr-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <Save className="w-5 h-5 mr-3" />
-                {isEditing ? 'Save Parameters' : 'Deploy Agent'}
-              </>
-            )}
+            {isSaving ? <><Loader2 className="w-4 h-4 animate-spin" /> Saving…</> : <><Save className="w-4 h-4" /> {isEditing ? 'Save' : 'Deploy Agent'}</>}
           </Button>
         </div>
       </div>
 
+      {error && (
+        <div className="p-4 rounded-xl border border-rose-500/20 bg-rose-500/10 text-rose-400 text-sm">{error}</div>
+      )}
+
       <form id="agent-form" onSubmit={handleSubmit}>
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 lg:grid-cols-4 h-auto p-1.5 bg-white/5 border border-white/10 rounded-[2rem] gap-2">
-            <TabsTrigger value="basic" className="rounded-3xl py-3 font-bold transition-all data-[state=active]:bg-white data-[state=active]:text-brand-black shadow-lg">
-              <Bot className="w-4 h-4 mr-2" />
-              Identity
-            </TabsTrigger>
-            <TabsTrigger value="voice" className="rounded-3xl py-3 font-bold transition-all data-[state=active]:bg-brand-violet data-[state=active]:text-white shadow-lg">
-              <Mic className="w-4 h-4 mr-2" />
-              Vocal/AI
-            </TabsTrigger>
-            <TabsTrigger value="advanced" className="rounded-3xl py-3 font-bold transition-all data-[state=active]:bg-white data-[state=active]:text-brand-black shadow-lg">
-              <SettingsIcon className="w-4 h-4 mr-2" />
-              Neural
-            </TabsTrigger>
-            <TabsTrigger value="phone" className="rounded-3xl py-3 font-bold transition-all data-[state=active]:bg-white data-[state=active]:text-brand-black shadow-lg">
-              <Phone className="w-4 h-4 mr-2" />
-              Gateway
-            </TabsTrigger>
+          {/* Tab bar */}
+          <TabsList className="grid w-full grid-cols-4 h-auto p-1 rounded-xl border border-white/[0.07] bg-white/[0.03] gap-1">
+            {tabOrder.map(tab => {
+              const Icon = tabMeta[tab].icon;
+              const active = activeTab === tab;
+              return (
+                <TabsTrigger
+                  key={tab}
+                  value={tab}
+                  className={`rounded-lg py-2.5 text-xs font-bold transition-all flex items-center gap-1.5
+                    ${active ? 'bg-violet-600 text-white shadow-glow-violet' : 'text-zinc-600 hover:text-zinc-300'}`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  {tabMeta[tab].label}
+                </TabsTrigger>
+              );
+            })}
           </TabsList>
 
-          {/* Step Progress Indicator */}
-          <div className="mt-6 mb-2">
-            <div className="flex items-center justify-between mb-3">
-              <span className="text-[10px] font-bold text-gray-500 uppercase tracking-widest">
-                Step {currentStepIndex + 1} of {tabOrder.length}
-              </span>
-              <span className="text-[10px] font-bold text-brand-violet uppercase tracking-widest">
-                {tabLabels[activeTab]}
-              </span>
-            </div>
-            <div className="flex gap-2">
+          {/* Step progress */}
+          <div className="mt-4 mb-6">
+            <div className="flex gap-1.5">
               {tabOrder.map((tab, i) => (
-                <div
-                  key={tab}
-                  className={`h-1.5 flex-1 rounded-full transition-all duration-500 ${i <= currentStepIndex
-                    ? 'bg-brand-violet shadow-[0_0_8px_rgba(108,99,255,0.4)]'
-                    : 'bg-white/10'
-                    }`}
-                />
+                <div key={tab} className={`h-1 flex-1 rounded-full transition-all duration-500 ${i <= idx ? 'bg-violet-600' : 'bg-white/[0.07]'}`} />
               ))}
             </div>
           </div>
 
-          <TabsContent value="basic" className="mt-8">
-            <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
-              <CardHeader className="p-10 pb-6">
-                <CardTitle className="flex items-center space-x-3 text-2xl font-bold text-brand-black">
-                  <Bot className="w-8 h-8 text-brand-violet" />
-                  <span>Agent Core Identity</span>
-                </CardTitle>
-                <CardDescription className="text-base font-medium">
-                  Establish the public face and status of your AI workforce.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="p-10 pt-0 space-y-8">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                  <div className="space-y-3">
-                    <Label htmlFor="name" className="text-xs font-bold uppercase tracking-widest text-gray-400">Registry Name *</Label>
-                    <Input
-                      id="name"
-                      placeholder="e.g., Senior Account Executive Sarah"
-                      value={formData.name}
-                      onChange={(e) => handleInputChange('name', e.target.value)}
-                      className="h-14 border-gray-100 bg-gray-50 focus:bg-white rounded-2xl focus:border-brand-violet focus:ring-brand-violet font-bold transition-all"
-                      required
-                    />
-                  </div>
-                  <div className="space-y-3">
-                    <Label htmlFor="status" className="text-xs font-bold uppercase tracking-widest text-gray-400">Deployment Status</Label>
-                    <div className="flex items-center justify-between h-14 px-6 bg-gray-50 border border-gray-100 rounded-2xl">
-                      <div className="flex items-center space-x-3">
-                        <Switch
-                          checked={formData.is_active}
-                          onCheckedChange={(checked) => handleInputChange('is_active', checked)}
-                          className="data-[state=checked]:bg-brand-violet"
-                        />
-                        <span className="font-bold text-sm text-brand-black">
-                          Agent is {formData.is_active ? 'Active' : 'Standby'}
-                        </span>
-                      </div>
-                      <Badge className={`border-0 uppercase tracking-widest text-[10px] h-6 px-3 font-bold ${formData.is_active ? 'bg-emerald-500/10 text-emerald-600' : 'bg-gray-200 text-gray-500'}`}>
-                        {formData.is_active ? 'Deployed' : 'Parked'}
-                      </Badge>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <Label htmlFor="description" className="text-xs font-bold uppercase tracking-widest text-gray-400">Operational Description</Label>
-                  <Textarea
-                    id="description"
-                    placeholder="Describe the specialized function, personality traits, and primary objectives of this agent..."
-                    value={formData.description}
-                    onChange={(e) => handleInputChange('description', e.target.value)}
-                    rows={4}
-                    className="border-gray-100 bg-gray-50 focus:bg-white rounded-2xl focus:border-brand-violet focus:ring-brand-violet font-medium transition-all"
+          {/* ── Tab: Identity ── */}
+          <TabsContent value="basic">
+            <div className="card-surface p-6 space-y-6">
+              <div className="flex items-center gap-2.5 pb-4 border-b border-white/[0.06]">
+                <Bot className="w-4 h-4 text-violet-400" />
+                <h3 className="font-heading font-bold text-white text-sm">Agent Identity</h3>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-2">
+                  <Label htmlFor="name" className={lbl}>Agent Name *</Label>
+                  <input
+                    id="name" placeholder="e.g., Support AI — Sarah"
+                    value={formData.name}
+                    onChange={e => set('name', e.target.value)}
+                    className={inp} required
                   />
                 </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="voice" className="mt-8 space-y-8">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
-                <CardHeader className="p-8">
-                  <CardTitle className="flex items-center space-x-3 text-xl font-bold text-brand-black">
-                    <Brain className="w-6 h-6 text-brand-violet" />
-                    <span>Intelligence Lattice</span>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="p-8 pt-0 space-y-6">
-                  <div className="space-y-3">
-                    <Label className="text-xs font-bold uppercase tracking-widest text-gray-400">Logical Engine (LLM)</Label>
-                    <Select value={formData.llm_model} onValueChange={(value) => handleInputChange('llm_model', value)}>
-                      <SelectTrigger className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-gray-100 shadow-xl">
-                        {llmModels.map((model) => (
-                          <SelectItem key={model.value} value={model.value} className="py-3 rounded-xl focus:bg-brand-violet/5">
-                            {model.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label className="text-xs font-bold uppercase tracking-widest text-gray-400">Vocal Synthesizer (TTS)</Label>
-                    <Select value={formData.tts_voice} onValueChange={(value) => handleInputChange('tts_voice', value)}>
-                      <SelectTrigger className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-gray-100 shadow-xl">
-                        {ttsVoices.map((voice) => (
-                          <SelectItem key={voice.value} value={voice.value} className="py-3 rounded-xl focus:bg-brand-violet/5">
-                            {voice.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label className="text-xs font-bold uppercase tracking-widest text-gray-400">Auditory Processor (STT)</Label>
-                    <Select value={formData.deepgram_model} onValueChange={(value) => handleInputChange('deepgram_model', value)}>
-                      <SelectTrigger className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-gray-100 shadow-xl">
-                        {deepgramModels.map((model) => (
-                          <SelectItem key={model.value} value={model.value} className="py-3 rounded-xl focus:bg-brand-violet/5">
-                            {model.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </CardContent>
-              </Card>
-
-              <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
-                <CardHeader className="p-8">
-                  <CardTitle className="text-xl font-bold text-brand-black">Behavioral Directives</CardTitle>
-                </CardHeader>
-                <CardContent className="p-8 pt-0">
-                  <div className="space-y-3">
-                    <Label htmlFor="system_prompt" className="text-xs font-bold uppercase tracking-widest text-gray-400">System Instructions</Label>
-                    <Textarea
-                      id="system_prompt"
-                      placeholder="You are a professional sales assistant..."
-                      value={formData.system_prompt}
-                      onChange={(e) => handleInputChange('system_prompt', e.target.value)}
-                      rows={10}
-                      className="border-gray-100 bg-gray-50 rounded-2xl font-mono text-xs p-5 focus:bg-white focus:border-brand-violet focus:ring-brand-violet transition-all"
-                    />
-                    <div className="flex items-center text-xs text-gray-400 bg-gray-50 p-3 rounded-xl mt-4">
-                      <Zap className="w-4 h-4 mr-2 text-brand-violet" />
-                      Prompt optimized for latency & semantic clarity.
+                <div className="space-y-2">
+                  <Label className={lbl}>Deployment Status</Label>
+                  <div className="flex items-center justify-between h-11 px-4 rounded-xl border border-white/[0.06] bg-white/[0.04]">
+                    <div className="flex items-center gap-2.5">
+                      <Switch
+                        checked={formData.is_active}
+                        onCheckedChange={v => set('is_active', v)}
+                        className="data-[state=checked]:bg-violet-600"
+                      />
+                      <span className="text-sm font-semibold text-white">{formData.is_active ? 'Active' : 'Standby'}</span>
                     </div>
+                    <span className={formData.is_active ? 'badge-active' : 'badge-inactive'}>
+                      {formData.is_active ? 'Live' : 'Off'}
+                    </span>
                   </div>
-                </CardContent>
-              </Card>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="description" className={lbl}>Description</Label>
+                <Textarea
+                  id="description"
+                  placeholder="Describe this agent's role, tone, and objectives…"
+                  value={formData.description}
+                  onChange={e => set('description', e.target.value)}
+                  rows={3} className="form-input w-full resize-none"
+                />
+              </div>
             </div>
           </TabsContent>
 
-          <TabsContent value="advanced" className="mt-8">
-            <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
-              <CardHeader className="p-10 pb-6">
-                <CardTitle className="text-2xl font-bold text-brand-black">Neural Fine-Tuning</CardTitle>
-                <CardDescription className="text-base font-medium"> Calibrate timing and recognition for low-latency humanlike interaction.</CardDescription>
-              </CardHeader>
-              <CardContent className="p-10 pt-0 space-y-10">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-12">
-                  <div className="space-y-6">
-                    <h4 className="flex items-center text-sm font-bold uppercase tracking-wider text-brand-violet">
-                      <Mic className="w-4 h-4 mr-2" />
-                      Acoustic Thresholds
-                    </h4>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="utterance_end" className="text-xs font-bold text-gray-500 uppercase">Utterance End (ms)</Label>
-                      <Input
-                        id="utterance_end"
-                        type="number"
-                        value={formData.deepgram_config.utterance_end_ms}
-                        onChange={(e) => handleDeepgramConfigChange('utterance_end_ms', e.target.value)}
-                        className="h-12 border-gray-100 rounded-xl font-bold"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="endpointing" className="text-xs font-bold text-gray-500 uppercase">Neural Endpointing (ms)</Label>
-                      <Input
-                        id="endpointing"
-                        type="number"
-                        value={formData.deepgram_config.endpointing}
-                        onChange={(e) => handleDeepgramConfigChange('endpointing', e.target.value)}
-                        className="h-12 border-gray-100 rounded-xl font-bold"
-                      />
-                    </div>
-
-                    <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100">
-                      <Label className="font-bold text-sm text-brand-black">Syntactic Fillers</Label>
-                      <Switch
-                        checked={formData.deepgram_config.filler_words}
-                        onCheckedChange={(checked) => handleDeepgramConfigChange('filler_words', checked)}
-                        className="data-[state=checked]:bg-brand-violet"
-                      />
-                    </div>
-                  </div>
-
-                  <div className="space-y-6">
-                    <h4 className="flex items-center text-sm font-bold uppercase tracking-wider text-brand-violet">
-                      <ShieldCheck className="w-4 h-4 mr-2" />
-                      Engagement Failsafe
-                    </h4>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="silence_timeout" className="text-xs font-bold text-gray-500 uppercase">Silence Deadline (seconds)</Label>
-                      <Input
-                        id="silence_timeout"
-                        type="number"
-                        value={formData.silence_timeout_seconds}
-                        onChange={(e) => handleInputChange('silence_timeout_seconds', parseInt(e.target.value) || 7)}
-                        className="h-12 border-gray-100 rounded-xl font-bold"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="silence_prompt" className="text-xs font-bold text-gray-500 uppercase">Re-engagement Prompt</Label>
-                      <Textarea
-                        id="silence_prompt"
-                        placeholder="I'm still here if you have any questions!"
-                        value={formData.silence_prompt_text}
-                        onChange={(e) => handleInputChange('silence_prompt_text', e.target.value)}
-                        rows={3}
-                        className="border-gray-100 rounded-xl font-medium"
-                      />
-                    </div>
+          {/* ── Tab: Vocal/AI ── */}
+          <TabsContent value="voice">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
+              <div className="card-surface p-6 space-y-5">
+                <div className="flex items-center gap-2.5 pb-4 border-b border-white/[0.06]">
+                  <Brain className="w-4 h-4 text-violet-400" />
+                  <h3 className="font-heading font-bold text-white text-sm">Intelligence Lattice</h3>
+                </div>
+                <div className="space-y-2">
+                  <Label className={lbl}>Logical Engine (LLM)</Label>
+                  <Select value={formData.llm_model} onValueChange={v => set('llm_model', v)}>
+                    <SelectTrigger className={sel}><SelectValue /></SelectTrigger>
+                    <SelectContent className={selContent}>
+                      {llmModels.map(m => <SelectItem key={m.value} value={m.value} className={selItem}>{m.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className={lbl}>Vocal Synthesizer (TTS)</Label>
+                  <Select value={formData.tts_voice} onValueChange={v => set('tts_voice', v)}>
+                    <SelectTrigger className={sel}><SelectValue /></SelectTrigger>
+                    <SelectContent className={selContent}>
+                      {ttsVoices.map(v => <SelectItem key={v.value} value={v.value} className={selItem}>{v.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <Label className={lbl}>Auditory Processor (STT)</Label>
+                  <Select value={formData.deepgram_model} onValueChange={v => set('deepgram_model', v)}>
+                    <SelectTrigger className={sel}><SelectValue /></SelectTrigger>
+                    <SelectContent className={selContent}>
+                      {deepgramModels.map(m => <SelectItem key={m.value} value={m.value} className={selItem}>{m.label}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="card-surface p-6 space-y-4">
+                <div className="flex items-center gap-2.5 pb-4 border-b border-white/[0.06]">
+                  <Brain className="w-4 h-4 text-violet-400" />
+                  <h3 className="font-heading font-bold text-white text-sm">Behavioral Directives</h3>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="system_prompt" className={lbl}>System Instructions</Label>
+                  <Textarea
+                    id="system_prompt"
+                    placeholder="You are a professional inbound AI assistant…"
+                    value={formData.system_prompt}
+                    onChange={e => set('system_prompt', e.target.value)}
+                    rows={10} className="form-input w-full font-mono-ui text-xs resize-none"
+                  />
+                  <div className="flex items-center gap-1.5 text-[11px] text-zinc-700 mt-1">
+                    <Zap className="w-3 h-3 text-violet-700" />
+                    Prompt optimized for latency &amp; clarity.
                   </div>
                 </div>
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           </TabsContent>
 
-          <TabsContent value="phone" className="mt-8">
-            <Card className="border-0 shadow-2xl bg-white rounded-[2.5rem] overflow-hidden">
-              <CardHeader className="p-10 pb-6">
-                <CardTitle className="flex items-center space-x-3 text-2xl font-bold text-brand-black">
-                  <Phone className="w-8 h-8 text-brand-violet" />
-                  <span>Connectivity Gateway</span>
-                </CardTitle>
-                <CardDescription className="text-base font-medium">Link this agent to your global communication infrastructure.</CardDescription>
-              </CardHeader>
-              <CardContent className="p-10 pt-0 space-y-8">
-                <div className="space-y-6 max-w-xl">
-                  <div className="space-y-3">
-                    <Label htmlFor="phone_number" className="text-xs font-bold uppercase tracking-widest text-gray-400">Assigned Inbound Number</Label>
-                    <Select value={formData.signalwire_phone_number || "none"} onValueChange={(value) => handleInputChange('signalwire_phone_number', value === "none" ? null : value)}>
-                      <SelectTrigger className="h-14 border-gray-100 bg-gray-50 rounded-2xl font-bold text-base">
-                        <SelectValue placeholder="Select a phone number..." />
-                      </SelectTrigger>
-                      <SelectContent className="rounded-2xl border-gray-100 shadow-xl">
-                        <SelectItem value="none" className="py-3 rounded-xl focus:bg-brand-violet/5">
-                          None
+          {/* ── Tab: Neural ── */}
+          <TabsContent value="advanced">
+            <div className="card-surface p-6 space-y-7">
+              <div className="pb-4 border-b border-white/[0.06]">
+                <h3 className="font-heading font-bold text-white">Neural Fine-Tuning</h3>
+                <p className="text-xs text-zinc-600 mt-0.5">Calibrate timing and recognition for low-latency calls.</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div className="space-y-5">
+                  <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-violet-400">
+                    <Mic className="w-3.5 h-3.5" /> Acoustic Thresholds
+                  </h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="utterance_end" className={lbl}>Utterance End (ms)</Label>
+                    <input id="utterance_end" type="number"
+                      value={formData.deepgram_config.utterance_end_ms}
+                      onChange={e => setDg('utterance_end_ms', e.target.value)}
+                      className="form-input h-10 w-full"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="endpointing" className={lbl}>Neural Endpointing (ms)</Label>
+                    <input id="endpointing" type="number"
+                      value={formData.deepgram_config.endpointing}
+                      onChange={e => setDg('endpointing', e.target.value)}
+                      className="form-input h-10 w-full"
+                    />
+                  </div>
+                  <div className="flex items-center justify-between p-3 rounded-xl border border-white/[0.06] bg-white/[0.03]">
+                    <Label className="text-sm font-semibold text-white">Syntactic Fillers</Label>
+                    <Switch
+                      checked={formData.deepgram_config.filler_words}
+                      onCheckedChange={v => setDg('filler_words', v)}
+                      className="data-[state=checked]:bg-violet-600"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-5">
+                  <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.12em] text-violet-400">
+                    <ShieldCheck className="w-3.5 h-3.5" /> Engagement Failsafe
+                  </h4>
+                  <div className="space-y-2">
+                    <Label htmlFor="silence_timeout" className={lbl}>Silence Timeout (seconds)</Label>
+                    <input id="silence_timeout" type="number"
+                      value={formData.silence_timeout_seconds}
+                      onChange={e => set('silence_timeout_seconds', parseInt(e.target.value) || 7)}
+                      className="form-input h-10 w-full"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="silence_prompt" className={lbl}>Re-engagement Prompt</Label>
+                    <Textarea
+                      id="silence_prompt"
+                      placeholder="Are you still there?"
+                      value={formData.silence_prompt_text}
+                      onChange={e => set('silence_prompt_text', e.target.value)}
+                      rows={3} className="form-input w-full resize-none"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </TabsContent>
+
+          {/* ── Tab: Gateway ── */}
+          <TabsContent value="phone">
+            <div className="card-surface p-6 space-y-6">
+              <div className="flex items-center gap-2.5 pb-4 border-b border-white/[0.06]">
+                <Phone className="w-4 h-4 text-violet-400" />
+                <h3 className="font-heading font-bold text-white text-sm">Connectivity Gateway</h3>
+                <p className="text-xs text-zinc-600 ml-1">— Link to an inbound number.</p>
+              </div>
+              <div className="max-w-lg space-y-5">
+                <div className="space-y-2">
+                  <Label htmlFor="phone_number" className={lbl}>Assigned Inbound Number</Label>
+                  <Select
+                    value={formData.signalwire_phone_number || 'none'}
+                    onValueChange={v => set('signalwire_phone_number', v === 'none' ? '' : v)}
+                  >
+                    <SelectTrigger className={sel}>
+                      <SelectValue placeholder="Select a phone number…" />
+                    </SelectTrigger>
+                    <SelectContent className={selContent}>
+                      <SelectItem value="none" className={selItem}>None — manual test only</SelectItem>
+                      {phoneNumbers.map(n => (
+                        <SelectItem key={n.id} value={n.phone_number} className={selItem}>
+                          {n.phone_number}{n.friendly_name ? ` (${n.friendly_name})` : ''} — {n.provider}
                         </SelectItem>
-                        {phoneNumbers.map((num) => (
-                          <SelectItem key={num.id} value={num.phone_number} className="py-3 rounded-xl focus:bg-brand-violet/5">
-                            {num.phone_number} {num.friendly_name ? `(${num.friendly_name})` : ''} - {num.provider}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="p-5 bg-brand-violet/5 border border-brand-violet/20 rounded-2xl flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
-                    <div>
-                      <h4 className="font-bold text-brand-black flex items-center mb-1">
-                        <Hash className="w-4 h-4 mr-2 text-brand-violet" /> Need more numbers?
-                      </h4>
-                      <p className="text-xs text-gray-500 font-medium">Head over to the Phone Numbers dashboard to buy or import more.</p>
-                    </div>
-                    <Button type="button" variant="outline" className="shrink-0 bg-white border-brand-violet/20 text-brand-violet hover:bg-brand-violet hover:text-white rounded-xl font-bold" asChild>
-                      <Link to="/phone-numbers">Manage Numbers</Link>
-                    </Button>
-                  </div>
+                      ))}
+                    </SelectContent>
+                  </Select>
                 </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-6 align-top border-t border-gray-100">
-                  <div className="p-6 bg-brand-violet/5 rounded-3xl border border-brand-violet/10">
-                    <h4 className="font-bold text-brand-black mb-2 flex items-center">
-                      <div className="w-6 h-6 bg-brand-violet text-white rounded-full flex items-center justify-center text-[10px] mr-2">1</div>
-                      Provision
-                    </h4>
-                    <p className="text-xs text-gray-500 font-medium leading-relaxed">Secure numbers through your cloud dashboard.</p>
+                <Link
+                  to="/phone-numbers"
+                  className="flex items-center justify-between p-4 rounded-xl border border-violet-500/20 bg-violet-500/[0.06] hover:bg-violet-500/10 transition-colors group"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-white group-hover:text-violet-300 transition-colors">Manage Phone Numbers</p>
+                    <p className="text-[11px] text-zinc-600">Buy SignalWire or import your own Twilio number</p>
                   </div>
-                  <div className="p-6 bg-brand-violet/5 rounded-3xl border border-brand-violet/10">
-                    <h4 className="font-bold text-brand-black mb-2 flex items-center">
-                      <div className="w-6 h-6 bg-brand-violet text-white rounded-full flex items-center justify-center text-[10px] mr-2">2</div>
-                      Redirect
-                    </h4>
-                    <p className="text-xs text-gray-500 font-medium leading-relaxed">Point webhooks to the neural interface endpoint.</p>
+                  <Hash className="w-4 h-4 text-violet-500 shrink-0 group-hover:text-violet-300" />
+                </Link>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-white/[0.05]">
+                {[['1', 'Provision', 'Buy a number or import Twilio on the Numbers page.'],
+                ['2', 'Select', 'Choose that number above.'],
+                ['3', 'Test', 'Run a unit test before going live.']].map(([n, title, desc]) => (
+                  <div key={n} className="p-4 rounded-xl bg-white/[0.03] border border-white/[0.05]">
+                    <div className="w-6 h-6 rounded-lg bg-violet-600 flex items-center justify-center text-[10px] text-white font-bold mb-2">{n}</div>
+                    <p className="text-sm font-bold text-white mb-1">{title}</p>
+                    <p className="text-[11px] text-zinc-600 leading-relaxed">{desc}</p>
                   </div>
-                  <div className="p-6 bg-brand-violet/5 rounded-3xl border border-brand-violet/10">
-                    <h4 className="font-bold text-brand-black mb-2 flex items-center">
-                      <div className="w-6 h-6 bg-brand-violet text-white rounded-full flex items-center justify-center text-[10px] mr-2">3</div>
-                      Execute
-                    </h4>
-                    <p className="text-xs text-gray-500 font-medium leading-relaxed">Run a diagnostic unit test before scaling to production.</p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                ))}
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
 
-        {/* Next / Previous Navigation */}
-        <div className="flex items-center justify-between mt-8 pt-6 border-t border-white/5">
-          <Button
-            type="button"
-            variant="ghost"
-            onClick={goPrev}
-            disabled={isFirstStep}
-            className={`h-14 px-8 rounded-2xl font-bold text-sm transition-all ${isFirstStep
-              ? 'opacity-30 cursor-not-allowed text-gray-600'
-              : 'text-white bg-white/5 border border-white/10 hover:bg-white/10 hover:border-brand-violet/50'
+        {/* ── Prev / Next nav ── */}
+        <div className="flex items-center justify-between mt-6 pt-5 border-t border-white/[0.05]">
+          <button
+            type="button" onClick={() => !isFirst && setActiveTab(tabOrder[idx - 1])}
+            disabled={isFirst}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all ${isFirst
+                ? 'opacity-20 cursor-not-allowed text-zinc-600 bg-transparent'
+                : 'text-zinc-400 hover:text-white border border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.07]'
               }`}
           >
-            <ChevronLeft className="w-5 h-5 mr-2" />
-            Previous: {!isFirstStep ? tabLabels[tabOrder[currentStepIndex - 1]] : ''}
-          </Button>
+            <ChevronLeft className="w-4 h-4" />
+            {!isFirst ? tabMeta[tabOrder[idx - 1]].label : 'Back'}
+          </button>
 
-          {isLastStep ? (
+          {isLast ? (
             <Button
               type="submit"
               disabled={isSaving || !formData.name}
-              className="h-14 px-10 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold text-sm transition-all active:scale-[0.98]"
+              className="btn-primary h-10 px-6 disabled:opacity-60"
             >
-              {isSaving ? (
-                <>
-                  <div className="w-5 h-5 mr-3 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                  Deploying...
-                </>
-              ) : (
-                <>
-                  <Check className="w-5 h-5 mr-2" />
-                  {isEditing ? 'Save Parameters' : 'Deploy Agent'}
-                </>
-              )}
+              {isSaving
+                ? <><Loader2 className="w-4 h-4 animate-spin" /> Deploying…</>
+                : <><Check className="w-4 h-4" /> {isEditing ? 'Save Changes' : 'Deploy Agent'}</>
+              }
             </Button>
           ) : (
-            <Button
+            <button
               type="button"
-              onClick={goNext}
-              className="h-14 px-8 bg-brand-violet hover:bg-brand-violet/90 text-white rounded-2xl shadow-lg shadow-brand-violet/20 font-bold text-sm transition-all active:scale-[0.98]"
+              onClick={() => setActiveTab(tabOrder[idx + 1])}
+              className="btn-primary flex items-center gap-2 h-10 px-5"
             >
-              Next: {tabLabels[tabOrder[currentStepIndex + 1]]}
-              <ChevronRight className="w-5 h-5 ml-2" />
-            </Button>
+              {tabMeta[tabOrder[idx + 1]].label} <ChevronRight className="w-4 h-4" />
+            </button>
           )}
         </div>
       </form>
