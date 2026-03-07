@@ -4,7 +4,7 @@ import logging
 from fastapi import HTTPException
 from app.services.signalwire import purchase_number, configure_number_webhook
 from app.database import SessionLocal
-from app.models import Agent
+from app.models import Agent, Organization
 
 logger = logging.getLogger("StripeService")
 
@@ -39,6 +39,40 @@ def create_checkout_session(agent_id: str, phone_number: str, user_email: str):
         return {"url": session.url}
     except Exception as e:
         logger.error(f"Failed to create checkout session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+def create_wallet_recharge_session(org_id: str, amount_usd: int, user_email: str):
+    """
+    Creates a Stripe Checkout Session to recharge the prepaid wallet.
+    amount_usd should be the whole dollar amount (e.g., 5, 10, 50).
+    """
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            customer_email=user_email,
+            line_items=[{
+                'price_data': {
+                    'currency': 'usd',
+                    'product_data': {
+                        'name': f'VoiceRender AI Prepaid Compute (${amount_usd})',
+                        'description': 'Funds used for $0.03/min inbound call processing.'
+                    },
+                    'unit_amount': amount_usd * 100, # Convert to cents
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=f"{FRONTEND_URL}/dashboard/settings?recharge_success=true&amount={amount_usd}",
+            cancel_url=f"{FRONTEND_URL}/dashboard/settings?recharge_cancelled=true",
+            metadata={
+                "org_id": str(org_id),
+                "amount_usd": str(amount_usd),
+                "type": "wallet_recharge"
+            }
+        )
+        return {"url": session.url}
+    except Exception as e:
+        logger.error(f"Failed to create wallet recharge session: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 def handle_stripe_webhook(payload: bytes, sig_header: str):
@@ -92,5 +126,25 @@ def handle_stripe_webhook(payload: bytes, sig_header: str):
             except Exception as e:
                 logger.error(f"Provisioning failed after successful payment: {e}")
                 # In a real production app, you might want to queue a retry or notify an admin here.
+
+        elif metadata.get("type") == "wallet_recharge":
+            org_id = metadata.get("org_id")
+            amount_usd = int(metadata.get("amount_usd", 0))
+            
+            # $0.03 per minute = $0.0005 per second. amount_usd / 0.03 * 60 = seconds
+            seconds_to_add = int((amount_usd / 0.03) * 60)
+            
+            logger.info(f"Recharge completed for org {org_id}. Adding {seconds_to_add} seconds for ${amount_usd}.")
+            
+            try:
+                db = SessionLocal()
+                org = db.query(Organization).filter(Organization.id == org_id).first()
+                if org:
+                    org.balance_seconds = org.balance_seconds + seconds_to_add
+                    db.commit()
+                db.close()
+                logger.info(f"Successfully recharged wallet for org {org_id}.")
+            except Exception as e:
+                logger.error(f"Wallet recharge failed after successful payment: {e}")
 
     return {"status": "success"}

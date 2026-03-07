@@ -12,6 +12,7 @@ import CallList from "./components/Calls/CallList"; // Import CallList
 import CallDetails from "./components/Calls/CallDetails"; // Import CallDetails
 import Reports from "./components/Reports/Reports";
 import Teams from "./components/Settings/Teams";
+import Settings from "./components/Settings/Settings";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { Toaster } from "./components/ui/toaster"; // Assuming you have a Toaster component
 
@@ -55,7 +56,7 @@ function App() {
                 <Route path="settings/users" element={<Teams />} />
                 {/* Placeholder routes - to be implemented */}
                 <Route path="settings/api-keys" element={<div className="p-6"><h1 className="text-2xl font-bold">API Keys (Coming Soon)</h1><p className="text-gray-600 mt-2">Generate and manage API keys for integration.</p></div>} />
-                <Route path="settings" element={<div className="p-6"><h1 className="text-2xl font-bold">Account Settings (Coming Soon)</h1><p className="text-gray-600 mt-2">Manage your account preferences and billing.</p></div>} />
+                <Route path="settings" element={<Settings />} />
               </Route>
             </Route>
           </Routes>

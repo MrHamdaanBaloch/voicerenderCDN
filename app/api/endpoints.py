@@ -96,8 +96,12 @@ async def login_for_access_token(form_data: OAuth2PasswordRequestForm = Depends(
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/users/me", response_model=UserResponse)
-async def read_users_me(current_user: User = Depends(get_current_user)):
-    return current_user
+async def read_users_me(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    # Inject the organization balance into the user response for convenience
+    user_dict = current_user.__dict__.copy()
+    if current_user.organization:
+        user_dict['balance_seconds'] = current_user.organization.balance_seconds
+    return user_dict
 
 # --- Agent Endpoints ---
 @router.post("/agents", response_model=AgentResponse, status_code=status.HTTP_201_CREATED)
@@ -276,7 +280,7 @@ async def get_dashboard_stats(
 
 # --- Billing and Phone Number Endpoints ---
 from app.services.signalwire import search_available_numbers
-from app.services.stripe_service import create_checkout_session, handle_stripe_webhook
+from app.services.stripe_service import create_checkout_session, handle_stripe_webhook, create_wallet_recharge_session
 
 @router.get("/phone-numbers/search")
 async def search_numbers(area_code: Optional[str] = None):
@@ -298,6 +302,22 @@ async def create_checkout(
 ):
     try:
         result = create_checkout_session(agent_id=req.agent_id, phone_number=req.phone_number, user_email=current_user.email)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+class RechargeRequest(BaseModel):
+    amount_usd: int
+
+@router.post("/billing/create-recharge-session")
+async def create_recharge(
+    req: RechargeRequest,
+    current_user: User = Depends(get_current_user)
+):
+    try:
+        if req.amount_usd < 5:
+            raise ValueError("Minimum recharge amount is $5")
+        result = create_wallet_recharge_session(org_id=str(current_user.organization_id), amount_usd=req.amount_usd, user_email=current_user.email)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

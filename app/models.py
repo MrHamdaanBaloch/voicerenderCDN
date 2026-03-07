@@ -15,6 +15,7 @@ class Organization(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     stripe_customer_id = Column(String, nullable=True)
     plan_id = Column(UUID(as_uuid=True), ForeignKey("plans.id"), nullable=True)
+    balance_seconds = Column(Integer, default=6000) # 100 Free Minutes (6000 seconds)
 
     users = relationship("User", back_populates="organization")
     agents = relationship("Agent", back_populates="organization")

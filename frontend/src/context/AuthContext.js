@@ -9,22 +9,23 @@ export const AuthProvider = ({ children }) => {
     const [loading, setLoading] = useState(true);
     const navigate = useNavigate();
 
-    useEffect(() => {
-        const loadUser = async () => {
-            const token = localStorage.getItem('access_token');
-            if (token) {
-                try {
-                    const response = await api.auth.getMe();
-                    setUser(response.data);
-                } catch (error) {
-                    console.error("Failed to fetch user data:", error);
-                    localStorage.removeItem('access_token');
-                    setUser(null);
-                }
+    const refreshUser = async () => {
+        const token = localStorage.getItem('access_token');
+        if (token) {
+            try {
+                const response = await api.auth.getMe();
+                setUser(response.data);
+            } catch (error) {
+                console.error("Failed to fetch user data:", error);
+                localStorage.removeItem('access_token');
+                setUser(null);
             }
-            setLoading(false);
-        };
-        loadUser();
+        }
+        setLoading(false);
+    };
+
+    useEffect(() => {
+        refreshUser();
     }, []);
 
     const login = async (email, password) => {
@@ -60,7 +61,7 @@ export const AuthProvider = ({ children }) => {
     };
 
     return (
-        <AuthContext.Provider value={{ user, isAuthenticated: !!user, loading, login, register, logout }}>
+        <AuthContext.Provider value={{ user, isAuthenticated: !!user, loading, login, register, logout, refreshUser }}>
             {children}
         </AuthContext.Provider>
     );

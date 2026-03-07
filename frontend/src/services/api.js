@@ -64,6 +64,7 @@ const calls = {
 const billing = {
     searchNumbers: (areaCode = '') => api.get(`/phone-numbers/search${areaCode ? `?area_code=${areaCode}` : ''}`),
     createCheckoutSession: (agentId, phoneNumber) => api.post('/billing/create-checkout-session', { agent_id: agentId, phone_number: phoneNumber }),
+    createRechargeSession: (amountUsd) => api.post('/billing/create-recharge-session', { amount_usd: amountUsd }),
 };
 
 export default {

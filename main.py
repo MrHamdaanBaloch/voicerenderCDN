@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from groq import Groq
 from dotenv import load_dotenv
 from signalwire.voice_response import VoiceResponse, Start
+from twilio.twiml.voice_response import VoiceResponse as TwilioVoiceResponse
 from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
 
 # --- Import Database Logic ---
@@ -123,26 +124,33 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     if not agent:
         agent = db.query(Agent).filter(Agent.is_active == True).first()
         
+    response = VoiceResponse()
+
     if not agent:
         logger.error("No active agent found for incoming call")
-        # Still proceed, maybe use fallback later, but DB will fail without agent_id
-        # In this demo, we assume at least one agent exists
+        response.say("We're sorry, this agent is currently offline.")
+        response.hangup()
+        return Response(content=str(response), media_type="application/xml")
+
+    # Check Prepaid Balance
+    if agent.organization.balance_seconds <= 0:
+        logger.warning(f"Org {agent.organization_id} has insufficient balance. Rejecting call {call_sid}.")
+        response.say("This agent is currently unavailable due to insufficient account balance. Please contact the administrator.")
+        response.hangup()
+        return Response(content=str(response), media_type="application/xml")
 
     # Create the Call record
-    if agent:
-        new_call = Call(
-            agent_id=agent.id,
-            organization_id=agent.organization_id,
-            call_sid=call_sid,
-            from_number=from_number,
-            to_number=to_number,
-            status="in_progress"
-        )
-        db.add(new_call)
-        db.commit()
+    new_call = Call(
+        agent_id=agent.id,
+        organization_id=agent.organization_id,
+        call_sid=call_sid,
+        from_number=from_number,
+        to_number=to_number,
+        status="in_progress"
+    )
+    db.add(new_call)
+    db.commit()
 
-    response = VoiceResponse()
-    
     clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
     websocket_url = f"wss://{clean_url}/media/{call_sid}"
     
@@ -150,6 +158,51 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     start.stream(url=websocket_url, track='both_tracks')
     response.append(start)
     response.pause(length=60)
+    return Response(content=str(response), media_type="application/xml")
+
+@app.post("/incoming_twilio")
+async def handle_incoming_twilio(request: Request, db: Session = Depends(get_db)):
+    """BYOC Endpoint for Twilio clients"""
+    body = await request.form()
+    call_sid = body.get("CallSid")
+    to_number = body.get("To")
+    from_number = body.get("From")
+    
+    agent = db.query(Agent).filter(Agent.signalwire_phone_number == to_number, Agent.is_active == True).first()
+    if not agent:
+        agent = db.query(Agent).filter(Agent.is_active == True).first()
+        
+    response = TwilioVoiceResponse()
+
+    if not agent:
+        logger.error("No active agent found for Twilio incoming call")
+        response.say("We're sorry, this agent is currently offline.")
+        response.hangup()
+        return Response(content=str(response), media_type="application/xml")
+
+    if agent.organization.balance_seconds <= 0:
+        logger.warning(f"Org {agent.organization_id} has insufficient balance. Rejecting Twilio call {call_sid}.")
+        response.say("This agent is currently unavailable due to insufficient account balance. Please contact the administrator.")
+        response.hangup()
+        return Response(content=str(response), media_type="application/xml")
+
+    new_call = Call(
+        agent_id=agent.id,
+        organization_id=agent.organization_id,
+        call_sid=call_sid,
+        from_number=from_number,
+        to_number=to_number,
+        status="in_progress"
+    )
+    db.add(new_call)
+    db.commit()
+
+    clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
+    websocket_url = f"wss://{clean_url}/media/{call_sid}"
+    
+    connect = response.connect()
+    connect.stream(url=websocket_url, track='both_tracks')
+    
     return Response(content=str(response), media_type="application/xml")
 
 @app.websocket("/media/{call_sid}")
@@ -252,7 +305,14 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 call_record.status = "completed"
                 call_record.end_time = datetime.utcnow()
                 call_record.duration_seconds = (call_record.end_time - call_record.start_time).seconds
+                
+                # Deduct from organization balance
+                if call_record.organization:
+                    org = call_record.organization
+                    org.balance_seconds = max(0, org.balance_seconds - call_record.duration_seconds)
+                
                 db.commit()
+                logger.info(f"Call {call_sid} completed. Duration: {call_record.duration_seconds}s. Balance deducted.")
             except Exception as e:
                 logger.error(f"Failed to update call status on close: {e}")
                 db.rollback()

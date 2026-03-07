@@ -102,6 +102,7 @@ class UserResponse(UserBase):
     updated_at: datetime
     is_active: bool
     role: str
+    balance_seconds: int = 6000 # Default to returning 6000 if not yet joined
 
     class Config:
         from_attributes = True
