@@ -289,12 +289,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     # --- Worker 2: Deepgram Aura-1 TTS Stream ---
     async def tts_worker():
         tts_url = "wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000"
-        # websockets v16+ uses 'additional_headers' (not 'extra_headers')
         headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
         
         while True:
             try:
-                async with websockets.connect(tts_url, additional_headers=headers) as tts_ws:
+                async with websockets.connect(tts_url, extra_headers=headers) as tts_ws:
                     
                     # Sub-task to receive mulaw bytes from Deepgram Aura and blast them to the Phone
                     async def receive_tts_audio():
@@ -341,7 +340,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     async def start_deepgram_stt():
         nonlocal dg_stt_connection
         try:
-            dg_stt_connection = deepgram_client.listen.asynclive.v("1")
+            # FLUX REQUIREMENT: Must use asyncwebsocket.v("2") = /v2/listen endpoint
+            # asynclive.v("1") = /v1/listen which returns HTTP 400 for Flux
+            dg_stt_connection = deepgram_client.listen.asyncwebsocket.v("2")
 
             async def on_message(self, result, **kwargs):
                 if result.type == "Results" and result.is_final:
@@ -370,17 +371,21 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             dg_stt_connection.on(LiveTranscriptionEvents.Transcript, on_message)
             dg_stt_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
 
-            # nova-2 = fast, accurate, conversational STT (flux returned HTTP 400)
+            # FLUX REQUIREMENTS per official Deepgram docs:
+            # - model: flux-general-en (not "flux" - that name returns HTTP 400)
+            # - encoding: mulaw at 8000Hz is supported for telephony
+            # - /v2/listen endpoint handles turn detection natively
             options = LiveOptions(
-                model="nova-2", 
-                language="en-US", 
-                encoding="mulaw", 
+                model="flux-general-en",
+                language="en-US",
+                encoding="mulaw",
                 sample_rate=8000,
-                interim_results=False, 
-                vad_events=True,       # Required for SpeechStarted interruption detection
-                endpointing=300
+                interim_results=False,
+                vad_events=True,
+                endpointing=500,
             )
-            await dg_stt_connection.start(options)
+            result = await dg_stt_connection.start(options)
+            logger.info(f"[STT-FLUX] ✅ Connected to Deepgram Flux v2: {result}")
         except Exception as e:
             logger.error(f"[STT] Deepgram Setup Error: {e}")
 
