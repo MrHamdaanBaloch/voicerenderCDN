@@ -111,7 +111,7 @@ const PhoneNumbers = () => {
         }
     };
 
-    const twilioUrl = `https://${process.env.REACT_APP_API_BASE_URL?.replace('/api/v1', '') || 'voicerender.vercel.app'}/incoming_twilio`;
+    const twilioUrl = `https://${process.env.REACT_APP_BACKEND_URL?.replace('/api/v1', '') || 'voicerender.vercel.app'}/incoming_twilio`;
 
     return (
         <div className="p-8 max-w-6xl mx-auto space-y-8 animate-reveal">

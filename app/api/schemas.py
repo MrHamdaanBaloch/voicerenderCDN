@@ -82,6 +82,7 @@ class CallResponse(BaseModel):
     call_metadata: dict
 
     transcripts: List[TranscriptResponse] = [] # Nested transcripts
+    agent: Optional[AgentResponse] = None # Nested agent
 
     class Config:
         from_attributes = True

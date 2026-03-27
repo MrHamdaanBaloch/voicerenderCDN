@@ -10,6 +10,7 @@ from fastapi import FastAPI, WebSocket, Response, Request, Depends, HTTPExceptio
 from starlette.websockets import WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
+import websockets
 from sqlalchemy.orm import Session
 from groq import Groq
 from dotenv import load_dotenv
@@ -46,6 +47,7 @@ app.add_middleware(
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 DEEPGRAM_API_KEY = os.environ.get("DEEPGRAM_API_KEY")
 RENDER_EXTERNAL_URL = os.environ.get("RENDER_EXTERNAL_URL")
+PUBLIC_URL_BASE = os.environ.get("PUBLIC_URL_BASE")
 
 TELEPHONY_CODEC = "pcm_mulaw"
 OPTIMIZED_AUDIO_DIR = "public_audio"
@@ -71,41 +73,8 @@ def cleanup_file(path: str):
     except Exception as e:
         logger.warning(f"Failed to cleanup file {path}: {e}")
 
-async def generate_tts_mulaw_bytes_for_stream(text: str, call_sid: str) -> bytes:
-    request_id = str(uuid.uuid4())
-    raw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_raw.wav")
-    mulaw_filepath = os.path.join(RAW_AUDIO_DIR, f"{request_id}_mulaw.raw")
-    try:
-        tts_response = groq_client.audio.speech.create(model="playai-tts", voice="Arista-PlayAI", input=text)
-        tts_response.write_to_file(raw_filepath)
-        command = ["ffmpeg", "-y", "-i", raw_filepath, "-ar", "8000", "-ac", "1", "-f", "mulaw", mulaw_filepath]
-        process = await asyncio.create_subprocess_exec(*command, stderr=asyncio.subprocess.PIPE)
-        await process.communicate()
-        async with aiofiles.open(mulaw_filepath, 'rb') as f:
-            return await f.read()
-    finally:
-        cleanup_file(raw_filepath)
-        cleanup_file(mulaw_filepath)
-
-async def send_audio_payload_chunked(websocket: WebSocket, stream_sid: str, audio_bytes: bytes, frame_ms: int = 20, sample_rate: int = 8000, call_sid: str = None, user_is_speaking_event: asyncio.Event = None):
-    bytes_per_ms = sample_rate // 1000
-    frame_size = bytes_per_ms * frame_ms
-    pos = 0
-    try:
-        while pos < len(audio_bytes):
-            if user_is_speaking_event and user_is_speaking_event.is_set():
-                break
-            chunk = audio_bytes[pos:pos + frame_size]
-            payload = base64.b64encode(chunk).decode("utf-8")
-            await websocket.send_text(json.dumps({
-                "event": "media",
-                "streamSid": stream_sid,
-                "media": {"track": "outbound", "payload": payload}
-            }))
-            pos += frame_size
-            await asyncio.sleep(frame_ms / 1000.0)
-    except Exception as e:
-        logger.error(f"Error in streaming: {e}")
+# --- Legacy Helpers Deleted ---
+# generate_tts_mulaw_bytes_for_stream has been replaced with in-memory direct WS streaming.
 
 # --- API Endpoints ---
 
@@ -157,8 +126,10 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     db.add(new_call)
     db.commit()
 
-    clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
-    websocket_url = f"wss://{clean_url}/media/{call_sid}"
+    base_url = RENDER_EXTERNAL_URL
+    ws_protocol = "wss" if base_url.startswith("https") else "ws"
+    clean_url = base_url.replace('https://', '').replace('http://', '')
+    websocket_url = f"{ws_protocol}://{clean_url}/media/{call_sid}"
     
     start = Start()
     start.stream(url=websocket_url, track='both_tracks')
@@ -207,8 +178,10 @@ async def handle_incoming_twilio(request: Request, db: Session = Depends(get_db)
     db.add(new_call)
     db.commit()
 
-    clean_url = RENDER_EXTERNAL_URL.replace('https://', '').replace('http://', '')
-    websocket_url = f"wss://{clean_url}/media/{call_sid}"
+    base_url = RENDER_EXTERNAL_URL
+    ws_protocol = "wss" if base_url.startswith("https") else "ws"
+    clean_url = base_url.replace('https://', '').replace('http://', '')
+    websocket_url = f"{ws_protocol}://{clean_url}/media/{call_sid}"
     
     connect = response.connect()
     connect.stream(url=websocket_url, track='both_tracks')
@@ -218,54 +191,189 @@ async def handle_incoming_twilio(request: Request, db: Session = Depends(get_db)
 @app.websocket("/media/{call_sid}")
 async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     await websocket.accept()
-    user_is_speaking_event = asyncio.Event()
-    deepgram_ready = asyncio.Event()
     stream_sid = None
-    dg_connection = None
-    buffered_frames = []
     
-    # We need a manual DB session for Websockets
+    # Internal communication flows
+    llm_input_queue = asyncio.Queue()
+    tts_input_queue = asyncio.Queue()
+
+    # Tasks and states
+    llm_task = None
+    tts_task = None
+    dg_stt_connection = None
+    is_answering = False
+
     db = SessionLocal()
     call_record = db.query(Call).filter(Call.call_sid == call_sid).first()
+    
+    if not call_record:
+        logger.error(f"Rejecting WS - Call {call_sid} not found in DB.")
+        await websocket.close()
+        db.close()
+        return
 
-    async def start_deepgram_connection():
-        nonlocal dg_connection
+    # Grab Agent Prompt
+    agent_prompt = "You are a friendly, conversational AI assistant on a phone call. Keep answers extremely brief, natural, and direct. Do not use markdown."
+    if call_record.agent and call_record.agent.system_prompt:
+        agent_prompt = call_record.agent.system_prompt
+
+    # --- Worker 1: Groq LLM Generation Stream ---
+    async def llm_worker():
+        nonlocal is_answering
+        while True:
+            try:
+                user_text = await llm_input_queue.get()
+                if not user_text.strip():
+                    continue
+                    
+                is_answering = True
+                
+                # Save purely for logging
+                try:
+                    t = Transcript(call_id=call_record.id, speaker="user", text=user_text)
+                    db.add(t)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+                logger.info(f"[LLM] Inferencing for user input: {user_text}")
+                
+                # Inference to Groq LLM
+                stream = groq_client.chat.completions.create(
+                    model="llama3-8b-8192",
+                    messages=[
+                        {"role": "system", "content": agent_prompt},
+                        {"role": "user", "content": user_text}
+                    ],
+                    stream=True,
+                    max_tokens=150
+                )
+                
+                ai_full_text = ""
+                for chunk in stream:
+                    content = chunk.choices[0].delta.content
+                    if content:
+                        ai_full_text += content
+                        # Stream the words directly into the TTS engine queue
+                        await tts_input_queue.put(content)
+                
+                # Flush instruction to Deepgram Aura
+                await tts_input_queue.put("\n\n")
+
+                # Save agent transcript
+                try:
+                    t = Transcript(call_id=call_record.id, speaker="agent", text=ai_full_text)
+                    db.add(t)
+                    db.commit()
+                except Exception:
+                    db.rollback()
+
+            except Exception as e:
+                logger.error(f"[LLM] Error: {e}")
+            finally:
+                is_answering = False
+
+    # --- Worker 2: Deepgram Aura-1 TTS Stream ---
+    async def tts_worker():
+        tts_url = "wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000"
+        headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
+        
+        while True:
+            try:
+                async with websockets.connect(tts_url, extra_headers=headers) as tts_ws:
+                    
+                    # Sub-task to receive mulaw bytes from Deepgram Aura and blast them to the Phone
+                    async def receive_tts_audio():
+                        while True:
+                            try:
+                                message = await tts_ws.recv()
+                                if isinstance(message, bytes) and stream_sid:
+                                    payload = base64.b64encode(message).decode("utf-8")
+                                    await websocket.send_text(json.dumps({
+                                        "event": "media",
+                                        "streamSid": stream_sid,
+                                        "media": {"track": "outbound", "payload": payload}
+                                    }))
+                            except websockets.exceptions.ConnectionClosed:
+                                break
+                            except Exception as e:
+                                logger.error(f"[TTS] Receive error: {e}")
+                                break
+                                
+                    recv_task = asyncio.create_task(receive_tts_audio())
+                    
+                    # Main loop streaming text characters TO Deepgram Aura
+                    while True:
+                        text_chunk = await tts_input_queue.get()
+                        
+                        try:
+                            if text_chunk == "\n\n":
+                                await tts_ws.send(json.dumps({"type": "Flush"}))
+                            else:
+                                await tts_ws.send(json.dumps({"type": "Speak", "text": text_chunk}))
+                        except Exception as e:
+                            logger.error(f"[TTS] Send Error: {e}")
+                            break
+                            
+            except Exception as e:
+                logger.error(f"[TTS] Websocket Connection Error: {e}")
+                await asyncio.sleep(1) # Reconnect delay
+
+    # --- Start Workers ---
+    llm_task = asyncio.create_task(llm_worker())
+    tts_task = asyncio.create_task(tts_worker())
+
+    # --- Configure Deepgram Flux STT (Listening & Interruption) ---
+    async def start_deepgram_stt():
+        nonlocal dg_stt_connection
         try:
-            dg_connection = deepgram_client.listen.asynclive.v("1")
+            dg_stt_connection = deepgram_client.listen.asynclive.v("1")
 
             async def on_message(self, result, **kwargs):
-                transcript_text = result.channel.alternatives[0].transcript
-                if transcript_text:
-                    logger.info(f"Transcript: {transcript_text}")
-                    if call_record:
-                        try:
-                            t = Transcript(
-                                call_id=call_record.id,
-                                speaker="user",
-                                text=transcript_text,
-                                confidence=result.channel.alternatives[0].confidence
-                            )
-                            db.add(t)
-                            db.commit()
-                        except Exception as db_err:
-                            logger.error(f"Failed to save user transcript: {db_err}")
-                            db.rollback()
+                if result.type == "Results" and result.is_final:
+                    transcript_text = result.channel.alternatives[0].transcript
+                    if transcript_text:
+                        # Feed recognized text into LLM queue
+                        await llm_input_queue.put(transcript_text)
+            
+            async def on_speech_started(self, speech_started, **kwargs):
+                nonlocal is_answering
+                # The user interrupted the AI mid-sentence!
+                if is_answering and stream_sid:
+                    logger.info("[VAD] Interruption Detected! Stopping AI Audio.")
+                    # 1. Clear the phone buffer
+                    await websocket.send_text(json.dumps({
+                        "event": "clear",
+                        "streamSid": stream_sid
+                    }))
+                    
+                    # 2. Flush the TTS queue to stop sending remaining text
+                    while not tts_input_queue.empty():
+                        tts_input_queue.get_nowait()
+                        
+                    is_answering = False
 
-            async def on_open(self, open, **kwargs):
-                deepgram_ready.set()
-                if buffered_frames:
-                    for frame in buffered_frames:
-                        await dg_connection.send(frame)
-                    buffered_frames.clear()
+            dg_stt_connection.on(LiveTranscriptionEvents.Transcript, on_message)
+            dg_stt_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
 
-            dg_connection.on(LiveTranscriptionEvents.Transcript, on_message)
-            dg_connection.on(LiveTranscriptionEvents.Open, on_open)
-            await dg_connection.start(LiveOptions(model="nova-2-phonecall", language="en-US", encoding="mulaw", sample_rate=8000))
+            # Deepgram Flux Model optimized for conversational end-of-turn
+            options = LiveOptions(
+                model="flux", 
+                language="en-US", 
+                encoding="mulaw", 
+                sample_rate=8000,
+                interim_results=False, 
+                vad_events=True,       # Required for SpeechStarted
+                endpointing=300
+            )
+            await dg_stt_connection.start(options)
         except Exception as e:
-            logger.error(f"Deepgram error: {e}")
+            logger.error(f"[STT] Deepgram Setup Error: {e}")
 
-    deepgram_task = asyncio.create_task(start_deepgram_connection())
+    # Launch STT
+    stt_task = asyncio.create_task(start_deepgram_stt())
 
+    # --- Telephony WebSocket Loop (Twilio/SignalWire) ---
     try:
         while True:
             message = await websocket.receive_text()
@@ -274,41 +382,37 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
 
             if event == 'start':
                 stream_sid = data['start']['streamSid']
-                greeting_text = "Hello! Welcome to the voice agent."
+                logger.info(f"[Telephony] Stream connected: {stream_sid}")
                 
-                # Save agent greeting to DB
-                if call_record:
-                    try:
-                        t = Transcript(call_id=call_record.id, speaker="agent", text=greeting_text)
-                        db.add(t)
-                        db.commit()
-                    except Exception as db_err:
-                        logger.error(f"Failed to save agent transcript: {db_err}")
-                        db.rollback()
-
-                tts_audio = await generate_tts_mulaw_bytes_for_stream(greeting_text, call_sid)
-                asyncio.create_task(send_audio_payload_chunked(websocket, stream_sid, tts_audio, call_sid=call_sid))
+                # Initial greeting push
+                greeting = "Hello! Welcome to the voice agent."
+                await tts_input_queue.put(greeting)
+                await tts_input_queue.put("\n\n")
 
             elif event == 'media':
                 media = data.get('media', {})
                 if media.get('track') == 'inbound':
                     audio_bytes = base64.b64decode(media.get('payload'))
-                    redis_client.append(f"audio_dump:{call_sid}", audio_bytes)
-                    if deepgram_ready.is_set() and dg_connection:
-                        await dg_connection.send(audio_bytes)
-                    else:
-                        buffered_frames.append(audio_bytes)
+                    # Send bytes to Deepgram STT
+                    if dg_stt_connection:
+                        await dg_stt_connection.send(audio_bytes)
+            
             elif event == 'stop':
+                logger.info(f"[Telephony] Stream stopped: {stream_sid}")
                 break
     except Exception as e:
-        logger.error(f"WS Loop Error: {e}")
+        logger.error(f"[Telephony] Loop Error: {e}")
     finally:
-        if dg_connection:
-            await dg_connection.finish()
-        deepgram_task.cancel()
+        # Cleanup routine
+        if dg_stt_connection:
+            await dg_stt_connection.finish()
+        if stt_task: stt_task.cancel()
+        if llm_task: llm_task.cancel()
+        if tts_task: tts_task.cancel()
+        
         await websocket.close()
         
-        # Complete the call in DB
+        # Complete call in billing system
         if call_record:
             try:
                 from datetime import datetime
@@ -316,14 +420,11 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 call_record.end_time = datetime.utcnow()
                 call_record.duration_seconds = (call_record.end_time - call_record.start_time).seconds
                 
-                # Deduct from organization balance
                 if call_record.organization:
                     org = call_record.organization
                     org.balance_seconds = max(0, org.balance_seconds - call_record.duration_seconds)
-                
                 db.commit()
-                logger.info(f"Call {call_sid} completed. Duration: {call_record.duration_seconds}s. Balance deducted.")
             except Exception as e:
-                logger.error(f"Failed to update call status on close: {e}")
+                logger.error(f"Failed to update billing: {e}")
                 db.rollback()
         db.close()

@@ -45,7 +45,7 @@ const Settings = () => {
         }
     };
 
-    const webhookUrl = `${process.env.REACT_APP_API_BASE_URL?.replace('/api/v1', '') || 'https://your-backend.com'}/incoming_twilio`;
+    const webhookUrl = `${process.env.REACT_APP_BACKEND_URL?.replace('/api/v1', '') || 'https://your-backend.com'}/incoming_twilio`;
 
     const copyWebhook = () => {
         navigator.clipboard.writeText(webhookUrl);
