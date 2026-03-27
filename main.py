@@ -140,10 +140,13 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     
     logger.info(f"[CALL:{call_sid}] 🔗 Generated WebSocket URL: {websocket_url}")
     
-    start = Start()
-    start.stream(url=websocket_url, track='both_tracks')
-    response.append(start)
-    response.pause(length=60)
+    # VERIFIED from official SignalWire docs:
+    # <Connect><Stream> = BIDIRECTIONAL (can send TTS audio back to caller) ✅
+    # <Start><Stream>   = RECEIVE-ONLY (produces silence — no TTS possible) ❌
+    # track='inbound_track' = only human voice → STT (prevents AI voice echo loop)
+    connect = response.connect()
+    connect.stream(url=websocket_url, track='inbound_track')
+    logger.info(f"[CALL:{call_sid}] ✅ Returning Connect/Stream XML with inbound_track to SignalWire.")
     return Response(content=str(response), media_type="application/xml")
 
 @app.post("/incoming_twilio")
