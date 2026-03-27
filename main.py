@@ -289,11 +289,12 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     # --- Worker 2: Deepgram Aura-1 TTS Stream ---
     async def tts_worker():
         tts_url = "wss://api.deepgram.com/v1/speak?model=aura-asteria-en&encoding=mulaw&sample_rate=8000"
+        # websockets v16+ uses 'additional_headers' (not 'extra_headers')
         headers = {"Authorization": f"Token {DEEPGRAM_API_KEY}"}
         
         while True:
             try:
-                async with websockets.connect(tts_url, extra_headers=headers) as tts_ws:
+                async with websockets.connect(tts_url, additional_headers=headers) as tts_ws:
                     
                     # Sub-task to receive mulaw bytes from Deepgram Aura and blast them to the Phone
                     async def receive_tts_audio():
@@ -369,14 +370,14 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             dg_stt_connection.on(LiveTranscriptionEvents.Transcript, on_message)
             dg_stt_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
 
-            # Deepgram Flux Model optimized for conversational end-of-turn
+            # nova-2 = fast, accurate, conversational STT (flux returned HTTP 400)
             options = LiveOptions(
-                model="flux", 
+                model="nova-2", 
                 language="en-US", 
                 encoding="mulaw", 
                 sample_rate=8000,
                 interim_results=False, 
-                vad_events=True,       # Required for SpeechStarted
+                vad_events=True,       # Required for SpeechStarted interruption detection
                 endpointing=300
             )
             await dg_stt_connection.start(options)
