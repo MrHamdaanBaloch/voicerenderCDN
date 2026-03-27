@@ -61,15 +61,23 @@ const PhoneNumbers = () => {
 
     const handleSearchNumbers = async (e) => {
         e.preventDefault();
+        
+        // Validation: sanitize and verify 3 digits
+        const cleanAreaCode = areaCodeSearch.replace(/\D/g, '');
+        if (cleanAreaCode.length > 0 && cleanAreaCode.length !== 3) {
+            toast({ title: "Invalid Area Code", description: "Please enter exactly 3 digits (or leave blank for any).", variant: "destructive" });
+            return;
+        }
+
         setIsSearchingNumbers(true);
         try {
-            const response = await api.billing.searchNumbers(areaCodeSearch);
+            const response = await api.billing.searchNumbers(cleanAreaCode);
             setAvailableNumbers(response.data);
             if (response.data.length === 0) {
                 toast({ title: "No numbers found", description: "Try a different area code." });
             }
         } catch (error) {
-            toast({ title: "Search failed", variant: "destructive" });
+            toast({ title: "Search failed", description: "SignalWire could not process this area code. Try another one, e.g., 415 or 888.", variant: "destructive" });
         } finally {
             setIsSearchingNumbers(false);
         }
@@ -207,22 +215,25 @@ const PhoneNumbers = () => {
                         <DialogTitle className="text-2xl font-bold flex items-center text-brand-black">
                             <Signal className="w-5 h-5 mr-3 text-brand-violet" /> Buy Native Number
                         </DialogTitle>
-                        <DialogDescription className="text-gray-500 font-medium">
-                            Native numbers cost $5/month. Toll-Free (800, 888) or Local area codes supported.
+                        <DialogDescription className="text-gray-500 font-medium pb-2">
+                            Native numbers cost $5/month. Enter a valid 3-digit USA/Canada area code, or leave blank to see all.
                         </DialogDescription>
                     </DialogHeader>
 
-                    <form onSubmit={handleSearchNumbers} className="flex gap-2">
-                        <Input
-                            value={areaCodeSearch}
-                            onChange={(e) => setAreaCodeSearch(e.target.value)}
-                            placeholder="Area code (e.g. 888 or 415)"
-                            maxLength={3}
-                            className="font-mono text-center text-brand-black border-gray-300 focus:border-brand-violet focus:ring-brand-violet"
-                        />
-                        <Button type="submit" disabled={isSearchingNumbers} className="bg-brand-black text-white px-6">
-                            {isSearchingNumbers ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                        </Button>
+                    <form onSubmit={handleSearchNumbers} className="space-y-3">
+                        <Label className="text-brand-black text-xs font-bold uppercase tracking-wider">Area Code (Optional)</Label>
+                        <div className="flex gap-2">
+                            <Input
+                                value={areaCodeSearch}
+                                onChange={(e) => setAreaCodeSearch(e.target.value.replace(/\D/g, ''))} // Auto-strip non-digits
+                                placeholder="e.g. 415 or 888"
+                                maxLength={3}
+                                className="font-mono text-center text-brand-black border-gray-300 focus:border-brand-violet focus:ring-brand-violet"
+                            />
+                            <Button type="submit" disabled={isSearchingNumbers} className="bg-brand-black hover:bg-zinc-800 text-white px-6">
+                                {isSearchingNumbers ? <Loader2 className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                            </Button>
+                        </div>
                     </form>
 
                     {availableNumbers.length > 0 && (
