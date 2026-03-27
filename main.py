@@ -293,7 +293,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         
         while True:
             try:
-                async with websockets.connect(tts_url, extra_headers=headers) as tts_ws:
+                async with websockets.connect(tts_url, additional_headers=headers) as tts_ws:
                     
                     # Sub-task to receive mulaw bytes from Deepgram Aura and blast them to the Phone
                     async def receive_tts_audio():
@@ -340,9 +340,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     async def start_deepgram_stt():
         nonlocal dg_stt_connection
         try:
-            # FLUX REQUIREMENT: Must use asyncwebsocket.v("2") = /v2/listen endpoint
-            # asynclive.v("1") = /v1/listen which returns HTTP 400 for Flux
-            dg_stt_connection = deepgram_client.listen.asyncwebsocket.v("2")
+            # FLUX REQUIREMENT: Must use asyncwebsocket (asynclive is deprecated)
+            # using .v("1") because SDK 4.8.0 doesn't have .v("2") module path yet
+            dg_stt_connection = deepgram_client.listen.asyncwebsocket.v("1")
 
             async def on_message(self, result, **kwargs):
                 if result.type == "Results" and result.is_final:
