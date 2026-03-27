@@ -97,22 +97,27 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     # Try to find agent by phone number, otherwise get the first active one
     agent = db.query(Agent).filter(Agent.signalwire_phone_number == to_number, Agent.is_active == True).first()
     if not agent:
+        logger.warning(f"[CALL:{call_sid}] No agent found for number {to_number}. Falling back to first active agent.")
         agent = db.query(Agent).filter(Agent.is_active == True).first()
+    else:
+        logger.info(f"[CALL:{call_sid}] Matched agent '{agent.name}' (id={agent.id}) for number {to_number}")
         
     response = VoiceResponse()
 
     if not agent:
-        logger.error("No active agent found for incoming call")
+        logger.error(f"[CALL:{call_sid}] ❌ No active agent found at all! Hanging up.")
         response.say("We're sorry, this agent is currently offline.")
         response.hangup()
         return Response(content=str(response), media_type="application/xml")
 
     # Check Prepaid Balance
     if agent.organization.balance_seconds <= 0:
-        logger.warning(f"Org {agent.organization_id} has insufficient balance. Rejecting call {call_sid}.")
+        logger.warning(f"[CALL:{call_sid}] ❌ Org {agent.organization_id} has ZERO balance. Rejecting call.")
         response.say("This agent is currently unavailable due to insufficient account balance. Please contact the administrator.")
         response.hangup()
         return Response(content=str(response), media_type="application/xml")
+
+    logger.info(f"[CALL:{call_sid}] ✅ Balance OK: {agent.organization.balance_seconds}s remaining. Proceeding.")
 
     # Create the Call record
     new_call = Call(
@@ -125,11 +130,15 @@ async def handle_incoming_call(request: Request, db: Session = Depends(get_db)):
     )
     db.add(new_call)
     db.commit()
+    logger.info(f"[CALL:{call_sid}] ✅ Call record saved to DB.")
 
-    base_url = RENDER_EXTERNAL_URL
-    ws_protocol = "wss" if base_url.startswith("https") else "ws"
-    clean_url = base_url.replace('https://', '').replace('http://', '')
+    # *** CRITICAL FIX: Always read PUBLIC_URL_BASE fresh at request time ***
+    public_base = os.getenv("PUBLIC_URL_BASE") or os.getenv("RENDER_EXTERNAL_URL", "http://localhost:8000")
+    ws_protocol = "wss" if public_base.startswith("https") else "ws"
+    clean_url = public_base.replace('https://', '').replace('http://', '')
     websocket_url = f"{ws_protocol}://{clean_url}/media/{call_sid}"
+    
+    logger.info(f"[CALL:{call_sid}] 🔗 Generated WebSocket URL: {websocket_url}")
     
     start = Start()
     start.stream(url=websocket_url, track='both_tracks')
