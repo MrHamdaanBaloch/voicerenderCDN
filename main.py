@@ -24,7 +24,7 @@ from app.models import User, Organization, Agent, Call, Transcript
 from app.api.endpoints import router as api_router # Import the API router
 
 # --- Load Environment Variables & Configuration ---
-load_dotenv()
+load_dotenv(override=True)
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger("VoiceAgentService")
 
