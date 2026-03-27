@@ -240,7 +240,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 
                 # Inference to Groq LLM
                 stream = groq_client.chat.completions.create(
-                    model="llama3-8b-8192",
+                    model="llama-3.1-8b-instant",
                     messages=[
                         {"role": "system", "content": agent_prompt},
                         {"role": "user", "content": user_text}
