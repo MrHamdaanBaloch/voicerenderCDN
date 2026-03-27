@@ -178,7 +178,8 @@ async def handle_incoming_twilio(request: Request, db: Session = Depends(get_db)
     db.add(new_call)
     db.commit()
 
-    base_url = RENDER_EXTERNAL_URL
+    public_url_base = os.getenv("PUBLIC_URL_BASE")
+    base_url = public_url_base if public_url_base else RENDER_EXTERNAL_URL
     ws_protocol = "wss" if base_url.startswith("https") else "ws"
     clean_url = base_url.replace('https://', '').replace('http://', '')
     websocket_url = f"{ws_protocol}://{clean_url}/media/{call_sid}"
