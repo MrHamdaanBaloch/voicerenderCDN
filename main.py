@@ -55,8 +55,6 @@ OPTIMIZED_AUDIO_DIR = "public_audio"
 RAW_AUDIO_DIR = "temp_raw_audio"
 
 groq_client = Groq(api_key=GROQ_API_KEY)
-# DeepgramClient handles keepalive and other options automatically or via config
-deepgram_client = DeepgramClient(DEEPGRAM_API_KEY)
 redis_client = redis.from_url(os.environ["REDIS_URL"])
 
 # --- Directory Setup ---
