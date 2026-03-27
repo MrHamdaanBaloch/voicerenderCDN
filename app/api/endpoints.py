@@ -1,6 +1,7 @@
 import uuid
 from datetime import timedelta
 from typing import List, Optional
+from pydantic import BaseModel
 
 from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from fastapi.security import OAuth2PasswordRequestForm
