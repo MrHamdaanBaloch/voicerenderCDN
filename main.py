@@ -16,7 +16,7 @@ from groq import Groq
 from dotenv import load_dotenv
 from signalwire.voice_response import VoiceResponse, Start
 from twilio.twiml.voice_response import VoiceResponse as TwilioVoiceResponse
-from deepgram import DeepgramClient, AsyncDeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
+from deepgram import DeepgramClient, AsyncDeepgramClient
 from deepgram.core.events import EventType
 
 # --- Import Database Logic ---
