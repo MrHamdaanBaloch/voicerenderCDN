@@ -37,7 +37,7 @@ app.include_router(api_router)
 # --- CORS Middleware (Fixed for Local Frontend & Preflight) ---
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://voicerender.vercel.app"], 
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "https://voicerender.vercel.app", "https://aura-voice-five.vercel.app"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
