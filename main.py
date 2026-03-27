@@ -16,7 +16,8 @@ from groq import Groq
 from dotenv import load_dotenv
 from signalwire.voice_response import VoiceResponse, Start
 from twilio.twiml.voice_response import VoiceResponse as TwilioVoiceResponse
-from deepgram import DeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
+from deepgram import DeepgramClient, AsyncDeepgramClient, DeepgramClientOptions, LiveTranscriptionEvents, LiveOptions
+from deepgram.core.events import EventType
 
 # --- Import Database Logic ---
 from app.database import get_db, SessionLocal
@@ -336,56 +337,76 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     llm_task = asyncio.create_task(llm_worker())
     tts_task = asyncio.create_task(tts_worker())
 
-    # --- Configure Deepgram STT (nova-2) ---
+    # --- Configure Deepgram STT (Flux v2) ---
     async def start_deepgram_stt():
         nonlocal dg_stt_connection
         try:
-            # Reverting back to standard asynclive v1 namespace because user account
-            # returns HTTP 400 for Flux/v2 endpoint calls.
-            dg_stt_connection = deepgram_client.listen.asynclive.v("1")
-
-            async def on_message(self, result, **kwargs):
-                if result.type == "Results" and result.is_final:
-                    transcript_text = result.channel.alternatives[0].transcript
-                    if transcript_text:
-                        # Feed recognized text into LLM queue
-                        await llm_input_queue.put(transcript_text)
+            # We strictly need AsyncDeepgramClient for v2 listen
+            async_dg_client = AsyncDeepgramClient()
             
-            async def on_speech_started(self, speech_started, **kwargs):
-                nonlocal is_answering
-                # The user interrupted the AI mid-sentence!
-                if is_answering and stream_sid:
-                    logger.info("[VAD] Interruption Detected! Stopping AI Audio.")
-                    # 1. Clear the phone buffer
-                    await websocket.send_text(json.dumps({
-                        "event": "clear",
-                        "streamSid": stream_sid
-                    }))
-                    
-                    # 2. Flush the TTS queue to stop sending remaining text
-                    while not tts_input_queue.empty():
-                        tts_input_queue.get_nowait()
-                        
-                    is_answering = False
-
-            dg_stt_connection.on(LiveTranscriptionEvents.Transcript, on_message)
-            dg_stt_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
-
-            # Using nova-2 which is the fastest, most stable conversational model
-            # Note: flux-general-en returned HTTP 400 on the live account connection
-            options = LiveOptions(
-                model="nova-2",
-                language="en-US",
+            # Using the required /v2/listen endpoint for Flux 
+            # as dictated by the v6.1.1 SDK documentation
+            async with async_dg_client.listen.v2.connect(
+                model="flux-general-en",
                 encoding="mulaw",
-                sample_rate=8000,
-                interim_results=False,
-                vad_events=True,
-                endpointing=300,
-            )
-            result = await dg_stt_connection.start(options)
-            logger.info(f"[STT] ✅ Connected to Deepgram STT nova-2: {result}")
+                sample_rate="8000"
+            ) as connection:
+                
+                # Expose this to the outer scope so the telephony websocket loop 
+                # can pump audio buffers into it via _send() or send_media()
+                dg_stt_connection = connection
+
+                def on_message(self, message, **kwargs):
+                    nonlocal is_answering
+                    
+                    # Flux parses events differently, looking for TurnInfo vs raw Results
+                    msg_type = getattr(message, "type", "Unknown")
+                    if msg_type == "TurnInfo":
+                        event_action = getattr(message, "event", "")
+                        transcript = getattr(message, "transcript", "")
+                        
+                        if event_action == "EndOfTurn" and transcript:
+                            logger.info(f"[STT-FLUX] EndOfTurn Transcript: '{transcript}'")
+                            # It's an end-of-turn, push transcript to the LLM
+                            asyncio.run_coroutine_threadsafe(
+                                llm_input_queue.put(transcript),
+                                asyncio.get_running_loop()
+                            )
+                        
+                        elif event_action == "EagerEndOfTurn" and transcript:
+                            pass # We can optionally pre-warm LLM here in the future
+                            
+                        elif event_action == "TurnResumed":
+                            logger.info("[VAD-FLUX] Interruption Detected! User resumed talking.")
+                            # The user kept speaking after a pause, we must interrupt AI!
+                            if is_answering and stream_sid:
+                                asyncio.run_coroutine_threadsafe(
+                                    websocket.send_text(json.dumps({
+                                        "event": "clear",
+                                        "streamSid": stream_sid
+                                    })), asyncio.get_running_loop()
+                                )
+                                # Flush TTS queue
+                                while not tts_input_queue.empty():
+                                    tts_input_queue.get_nowait()
+                                is_answering = False
+
+                connection.on(EventType.MESSAGE, on_message)
+                connection.on(EventType.ERROR, lambda self, error, **kwargs: logger.error(f"[STT-FLUX] Error: {error}"))
+                
+                # Start the background listener task natively
+                import threading
+                threading.Thread(target=connection.start_listening, daemon=True).start()
+                logger.info(f"[STT-FLUX] ✅ Connected to Deepgram Flux v2 /v2/listen")
+                
+                # Keep context open forever until tasks are cancelled
+                while True:
+                    await asyncio.sleep(60)
+                    
+        except asyncio.CancelledError:
+            logger.info("[STT-FLUX] STT Connection task cancelled.")
         except Exception as e:
-            logger.error(f"[STT] Deepgram Setup Error: {e}")
+            logger.error(f"[STT-FLUX] Deepgram Setup Error: {e}")
 
     # Launch STT
     stt_task = asyncio.create_task(start_deepgram_stt())
@@ -410,9 +431,9 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
                 media = data.get('media', {})
                 if media.get('track') == 'inbound':
                     audio_bytes = base64.b64decode(media.get('payload'))
-                    # Send bytes to Deepgram STT
+                    # Send bytes to Deepgram STT using the v2 SDK method
                     if dg_stt_connection:
-                        await dg_stt_connection.send(audio_bytes)
+                        dg_stt_connection.send_media(audio_bytes)
             
             elif event == 'stop':
                 logger.info(f"[Telephony] Stream stopped: {stream_sid}")
@@ -421,8 +442,7 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
         logger.error(f"[Telephony] Loop Error: {e}")
     finally:
         # Cleanup routine
-        if dg_stt_connection:
-            await dg_stt_connection.finish()
+        # Context manager handles STT finish automatically when task is cancelled
         if stt_task: stt_task.cancel()
         if llm_task: llm_task.cancel()
         if tts_task: tts_task.cancel()
