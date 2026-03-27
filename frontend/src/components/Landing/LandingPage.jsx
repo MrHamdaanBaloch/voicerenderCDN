@@ -357,7 +357,9 @@ const LandingPage = () => {
             <span className="font-heading font-bold text-white text-sm">VoiceRender</span>
           </div>
           <p className="text-[11px] text-zinc-700">© {new Date().getFullYear()} VoiceRender AI. Built for businesses that can't afford to miss a call.</p>
-          <div className="flex items-center gap-5 text-[11px] text-zinc-600">
+          <div className="flex flex-wrap items-center justify-center gap-5 text-[11px] text-zinc-600 mt-4 sm:mt-0">
+            <Link to="/terms-and-conditions" className="hover:text-white transition-colors">Terms & Refund Policy</Link>
+            <Link to="/privacy-policy" className="hover:text-white transition-colors">Privacy Policy</Link>
             <Link to="/login" className="hover:text-white transition-colors">Sign In</Link>
             <Link to="/register" className="hover:text-white transition-colors">Get Started</Link>
           </div>

@@ -12,6 +12,8 @@ import CallList from "./components/Calls/CallList"; // Import CallList
 import CallDetails from "./components/Calls/CallDetails"; // Import CallDetails
 import Reports from "./components/Reports/Reports";
 import Teams from "./components/Settings/Teams";
+import TermsOfService from "./components/Legal/TermsOfService";
+import PrivacyPolicy from "./components/Legal/PrivacyPolicy";
 import Settings from "./components/Settings/Settings";
 import PhoneNumbers from "./components/PhoneNumbers/PhoneNumbers";
 import { AuthProvider, useAuth } from "./context/AuthContext";
@@ -38,6 +40,8 @@ function App() {
             <Route path="/landing" element={<LandingPage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/register" element={<RegisterPage />} />
+            <Route path="/terms-and-conditions" element={<TermsOfService />} />
+            <Route path="/privacy-policy" element={<PrivacyPolicy />} />
 
             {/* Redirect root to landing or login based on auth status */}
             <Route path="/" element={<AuthRedirect />} />
