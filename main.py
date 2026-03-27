@@ -336,13 +336,13 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
     llm_task = asyncio.create_task(llm_worker())
     tts_task = asyncio.create_task(tts_worker())
 
-    # --- Configure Deepgram Flux STT (Listening & Interruption) ---
+    # --- Configure Deepgram STT (nova-2) ---
     async def start_deepgram_stt():
         nonlocal dg_stt_connection
         try:
-            # FLUX REQUIREMENT: Must use asyncwebsocket (asynclive is deprecated)
-            # using .v("1") because SDK 4.8.0 doesn't have .v("2") module path yet
-            dg_stt_connection = deepgram_client.listen.asyncwebsocket.v("1")
+            # Reverting back to standard asynclive v1 namespace because user account
+            # returns HTTP 400 for Flux/v2 endpoint calls.
+            dg_stt_connection = deepgram_client.listen.asynclive.v("1")
 
             async def on_message(self, result, **kwargs):
                 if result.type == "Results" and result.is_final:
@@ -371,21 +371,19 @@ async def media_websocket_handler(websocket: WebSocket, call_sid: str):
             dg_stt_connection.on(LiveTranscriptionEvents.Transcript, on_message)
             dg_stt_connection.on(LiveTranscriptionEvents.SpeechStarted, on_speech_started)
 
-            # FLUX REQUIREMENTS per official Deepgram docs:
-            # - model: flux-general-en (not "flux" - that name returns HTTP 400)
-            # - encoding: mulaw at 8000Hz is supported for telephony
-            # - /v2/listen endpoint handles turn detection natively
+            # Using nova-2 which is the fastest, most stable conversational model
+            # Note: flux-general-en returned HTTP 400 on the live account connection
             options = LiveOptions(
-                model="flux-general-en",
+                model="nova-2",
                 language="en-US",
                 encoding="mulaw",
                 sample_rate=8000,
                 interim_results=False,
                 vad_events=True,
-                endpointing=500,
+                endpointing=300,
             )
             result = await dg_stt_connection.start(options)
-            logger.info(f"[STT-FLUX] ✅ Connected to Deepgram Flux v2: {result}")
+            logger.info(f"[STT] ✅ Connected to Deepgram STT nova-2: {result}")
         except Exception as e:
             logger.error(f"[STT] Deepgram Setup Error: {e}")
 
